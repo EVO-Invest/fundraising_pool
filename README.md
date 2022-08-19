@@ -15,7 +15,7 @@ First, you need to clone this github repository.
 
 ```bash
 git clone https://github.com/EVO-Invest/fundraising_pool
-cd TreeOfPools
+cd fundraising_pool
 ```
 
 Now let's set the necessary packages for the corrective work hardhat.
