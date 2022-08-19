@@ -1,0 +1,21 @@
+node_modules
+.env
+coverage
+coverage.json
+typechain
+crytic-export
+forScan
+mcore_kgji6o0_
+env.json
+remappings.json
+.prettierrc
+package-lock.json
+Release
+usersData.json
+bin
+
+#Hardhat files
+cache
+artifacts
+.openzeppelin
+old_test
