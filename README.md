@@ -1,10 +1,10 @@
 # Fundraising pool
 
-Fundraising pool allows you to create crowdfunding pools, with a single access address.
+Fundraising pool allows you to create crowdfunding pools with a single access address.
 
-This project was created and is being improved by the Insider Club team. But we would be glad if you could join us and help us create a safe and open crowdfunding system.
+This project was created and is being developed by the EVO Invest team. We welcome any comments and suggestions to help us create a safe and open crowdfunding system.
 
-If you would like to contact us, please write to -
+If you would like to contact us, please write to evoinvestfund@gmail.com
 ## Overview
 
 ### Installation
