@@ -15,36 +15,6 @@ describe("Root of Pools", async function () {
       await ethers.getSigners();
 
     ranks = await Ranks.deploy();
-    own_ranks = ranks.connect(owner);
-    own_ranks.createRank(
-      "Common",
-      ["Min", "Max", "Commission"],
-      [100, 500, 20],
-      true
-    );
-
-    own_ranks.createRank(
-      "Rare",
-      ["Min", "Max", "Commission"],
-      [100, 1000, 20],
-      true
-    );
-
-    own_ranks.createRank(
-      "Legendary",
-      ["Min", "Max", "Commission"],
-      [100, 1000, 20],
-      true
-    );
-
-    own_ranks.createRank(
-      "Admin",
-      ["Min", "Max", "Commission"],
-      [0, 10000, 0],
-      true
-    );
-
-    await own_ranks.giveRank(owner.address, "Admin");
 
     USDT = await ethers.getContractFactory("BEP20Token");
     usdt = await USDT.deploy(6);
@@ -52,6 +22,56 @@ describe("Root of Pools", async function () {
     MSig = await ethers.getContractFactory("MultiSigWallet");
     msig = await MSig.deploy([owner.address, addr1.address, addr2.address], 2);
     await msig.deployed();
+
+    await ranks.connect(owner).transferOwnership(msig.address);
+
+    
+    tx = await ranks.populateTransaction.createRank(
+      "Common",
+      ["Min", "Max", "Commission"],
+      [100, 500, 20],
+      true
+    );
+      await msig.connect(owner).submitTransaction(ranks.address, 0, tx.data);
+      id = (await msig.transactionCount()) - 1;
+      await msig.connect(addr1).confirmTransaction(id);
+
+      tx = await ranks.populateTransaction.createRank(
+      "Rare",
+      ["Min", "Max", "Commission"],
+      [100, 1000, 20],
+      true
+    );
+    await msig.connect(owner).submitTransaction(ranks.address, 0, tx.data);
+      id = (await msig.transactionCount()) - 1;
+      await msig.connect(addr1).confirmTransaction(id);
+
+    tx = await ranks.populateTransaction.createRank(
+      "Legendary",
+      ["Min", "Max", "Commission"],
+      [100, 1000, 20],
+      true
+    );
+    await msig.connect(owner).submitTransaction(ranks.address, 0, tx.data);
+      id = (await msig.transactionCount()) - 1;
+      await msig.connect(addr1).confirmTransaction(id);
+
+    tx = await ranks.populateTransaction.createRank(
+      "Admin",
+      ["Min", "Max", "Commission"],
+      [0, 10000, 0],
+      true
+    );
+    await msig.connect(owner).submitTransaction(ranks.address, 0, tx.data);
+      id = (await msig.transactionCount()) - 1;
+      await msig.connect(addr1).confirmTransaction(id);
+
+      tx = await ranks.populateTransaction.giveRank(owner.address, "Admin");
+      await msig.connect(owner).submitTransaction(ranks.address, 0, tx.data);
+      id = (await msig.transactionCount()) - 1;
+      await msig.connect(addr1).confirmTransaction(id);
+
+
 
     Root = await ethers.getContractFactory("RootOfPools_v013");
     root = await upgrades.deployProxy(Root, [usdt.address, ranks.address], {
@@ -65,7 +85,7 @@ describe("Root of Pools", async function () {
 
   describe("Rank System", async function () {
     it("Parameters must be in the initial state", async function () {
-      expect(await ranks.owner()).to.equal(owner.address);
+      expect(await ranks.owner()).to.equal(msig.address);
       expect(await ranks.getNameParRank("Common")).to.have.lengthOf(3);
       expect(await ranks.getParRank("Common")).to.have.lengthOf(3);
     });
@@ -280,8 +300,15 @@ describe("Root of Pools", async function () {
       await msig.connect(addr1).confirmTransaction(id);
 
       //Get rank for addr2 and addr3
-      await ranks.connect(owner).giveRank(addr2.address, "Rare");
-      await ranks.connect(owner).giveRank(addr3.address, "Legendary");
+      tx = await ranks.populateTransaction.giveRank(addr2.address, "Rare");
+      await msig.connect(owner).submitTransaction(ranks.address, 0, tx.data);
+      id = (await msig.transactionCount()) - 1;
+      await msig.connect(addr1).confirmTransaction(id);
+
+      tx = await ranks.populateTransaction.giveRank(addr3.address, "Legendary");
+      await msig.connect(owner).submitTransaction(ranks.address, 0, tx.data);
+      id = (await msig.transactionCount()) - 1;
+      await msig.connect(addr1).confirmTransaction(id);
 
       //Deposit in Test pool
       await usdt.connect(addr1).approve(branch.address, 1000000000);
@@ -835,6 +862,44 @@ describe("Root of Pools", async function () {
       await msig.connect(addr1).confirmTransaction(id);
 
       expect(await branch.getState()).to.equal(4);
+    });
+
+    it("Check preShipment to the developer", async function(){
+      await usdt.connect(owner).transfer(addr1.address, 1000000000); //1000 usdt
+      await usdt.connect(owner).transfer(addr2.address, 1000000000);
+
+      //Open deposit in Test pool
+      tx = await root.populateTransaction.startFundraising("Test");
+      await msig.connect(owner).submitTransaction(root.address, 0, tx.data);
+      id = (await msig.transactionCount()) - 1;
+      await msig.connect(addr1).confirmTransaction(id);
+
+      //Deposit in Test pool
+      await usdt.connect(addr1).approve(branch.address, 1000000000);
+      await usdt.connect(addr2).approve(branch.address, 1000000000);
+
+      await root.connect(addr1).deposit("Test", 500000000); //500 usdt
+      await root.connect(addr2).deposit("Test", 500000000);
+
+      tx = await root.populateTransaction.preShipment("Test", 100000000);
+      await msig.connect(owner).submitTransaction(root.address, 0, tx.data);
+      id = (await msig.transactionCount()) - 1;
+      await msig.connect(addr1).confirmTransaction(id);
+
+      expect(await usdt.balanceOf(devUSDT.address)).to.equal(100000000);
+
+      //Close fundraising Test pool
+      tx = await root.populateTransaction.stopFundraising("Test");
+      await msig.connect(owner).submitTransaction(root.address, 0, tx.data);
+      id = (await msig.transactionCount()) - 1;
+      await msig.connect(addr1).confirmTransaction(id);
+
+      expect((await usdt.balanceOf(devUSDT.address)).toString()).to.equal(
+        "800000000"
+      ); // 800 usdt
+      expect((await usdt.balanceOf(msig.address)).toString()).to.equal(
+        "200000000"
+      );
     });
   });
 });

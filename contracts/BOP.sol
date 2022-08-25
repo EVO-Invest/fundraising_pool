@@ -62,6 +62,7 @@ contract BranchOfPools is Ownable, Initializable {
     address public _usd;
     address public _token;
     address public _devUSDAddress;
+    uint256 public _preShipment;
 
     mapping(address => uint256) private _valueUSDList;
     mapping(address => uint256) private _usdEmergency;
@@ -281,6 +282,20 @@ contract BranchOfPools is Ownable, Initializable {
         }
     }
 
+    function preShipment(uint256 amount)
+        external
+        onlyOwner
+        onlyNotState(State.Pause)
+        onlyNotState(State.Emergency)
+        onlyNotState(State.TokenDistribution)
+    {
+        require(amount < _CURRENT_VALUE);
+
+        _preShipment += amount;
+
+        ERC20(_usd).transfer(_devUSDAddress, amount);
+    }
+
     /// @notice Allows you to distribute the collected funds
     /// @dev This function should be used only in case of automatic closing of the pool
     function collectFunds() external onlyOwner onlyState(State.WaitingToken) {
@@ -294,7 +309,7 @@ contract BranchOfPools is Ownable, Initializable {
 
         //Send to devs
         require(
-            ERC20(_usd).transfer(_devUSDAddress, _FUNDS_RAISED),
+            ERC20(_usd).transfer(_devUSDAddress, _FUNDS_RAISED - _preShipment),
             "COLLECT: Transfer error"
         );
 
@@ -320,7 +335,7 @@ contract BranchOfPools is Ownable, Initializable {
 
         //Send to devs
         require(
-            ERC20(_usd).transfer(_devUSDAddress, _FUNDS_RAISED),
+            ERC20(_usd).transfer(_devUSDAddress, _FUNDS_RAISED - _preShipment),
             "COLLECT: Transfer error"
         );
 

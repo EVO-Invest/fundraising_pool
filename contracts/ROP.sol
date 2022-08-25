@@ -186,6 +186,14 @@ contract RootOfPools_v013 is Initializable, OwnableUpgradeable {
         BranchOfPools(_poolsTable[name]).startFundraising();
     }
 
+    function preShipment(string calldata name, uint256 amount)
+        external
+        onlyOwner
+        shouldExist(name)
+    {
+        BranchOfPools(_poolsTable[name]).preShipment(amount);
+    }
+
     function collectFunds(string calldata name)
         external
         onlyOwner
