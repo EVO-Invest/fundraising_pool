@@ -1,10 +1,10 @@
 # Fundraising pool
 
-Fundraising pool allows you to create crowdfunding pools, with a single access address.
+Fundraising pool allows you to create crowdfunding pools with a single access address.
 
-This project was created and is being improved by the Insider Club team. But we would be glad if you could join us and help us create a safe and open crowdfunding system.
+This project was created and is being developed by the EVO Invest team. We welcome any comments and suggestions to help us create a safe and open crowdfunding system.
 
-If you would like to contact us, please write to hello@myinsider.club
+If you would like to contact us, please write to evoinvestfund@gmail.com
 ## Overview
 
 ### Installation
@@ -15,7 +15,7 @@ First, you need to clone this github repository.
 
 ```bash
 git clone https://github.com/EVO-Invest/fundraising_pool
-cd TreeOfPools
+cd fundraising_pool
 ```
 
 Now let's set the necessary packages for the corrective work hardhat.
@@ -28,7 +28,7 @@ npm install
 
 Wait a bit, it might take a while to load all the necessary pokets :\
 
-Now you are almost ready to use TreeOfPools.
+Now you are almost ready to use FundraisingPool.
 
 #### Setting up personal data
 
@@ -93,7 +93,7 @@ To import this information into a contract, use this script
 npx hardhat run --network <testbsc/bsc/eth/polygon/moonbeam> scripts/importData.js
 ```
 
-> Important: You must have TreeOfPools instances in both networks in order to pass information between networks correctly.
+> Important: You must have FundraisingPool instances in both networks in order to pass information between networks correctly.
 
 #### Verify
 
