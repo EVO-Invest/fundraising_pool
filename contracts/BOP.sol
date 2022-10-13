@@ -90,7 +90,8 @@ contract BranchOfPools is Initializable {
         address Root,
         uint256 VALUE,
         uint256 Step,
-        address devUSDAddress
+        address devUSDAddress,
+        address tokenUSD
     ) external initializer {
         require(Root != address(0), "The root address must not be zero.");
         require(
@@ -100,7 +101,7 @@ contract BranchOfPools is Initializable {
 
         _owner = msg.sender;
         _root = Root;
-        _usd = RootOfPools_v2(_root).getUSDAddress();
+        _usd = tokenUSD;
         _decimals = 10**ERC20(_usd).decimals();
         _VALUE = VALUE * _decimals;
         _stepValue = Step * _decimals;

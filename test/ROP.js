@@ -83,7 +83,8 @@ describe("Root of Pools", async function () {
         root.address,
         4500,
         100,
-        devUSDT.address
+        devUSDT.address,
+        usdt.address
       );
 
       tx = await root.populateTransaction.createPool("Test", 0, tx1.data);
