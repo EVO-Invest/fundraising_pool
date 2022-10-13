@@ -31,17 +31,17 @@ const { duration } = require("@openzeppelin/test-helpers/src/time");
         usdt = await USDT.deploy(6);
 
         //Create root
-        ROOT = await ethers.getContractFactory("RootOfPools_v013");
+        ROOT = await ethers.getContractFactory("RootOfPools_v2");
         root = await ROOT.deploy();
         await root.initialize(usdt.address, ranks.address);
 
         //Create branch
         BRANCH = await ethers.getContractFactory("BranchOfPools");
-        branch = await BRANCH.deploy(
+        branch = await BRANCH.deploy();
+        await branch.init(
             root.address,
             4500000000,
             100,
-            1,
             devUSDT.address
         );
     });
@@ -49,7 +49,7 @@ const { duration } = require("@openzeppelin/test-helpers/src/time");
         describe("Pause", async function(){
             describe("Must be performed",async function(){
                 it("changeTargetValue", async function(){
-                    expect((await branch._VALUE()).toString()).to.equal("4500000000"); 
+                    expect((await branch._VALUE()).toString()).to.equal("4500000000000000"); 
 
                     await branch.connect(owner).changeTargetValue(5000);
 
@@ -57,27 +57,19 @@ const { duration } = require("@openzeppelin/test-helpers/src/time");
                 });
 
                 it("changeStepValue", async function(){
-                    expect((await branch._stepValue()).toString()).to.equal("100"); 
+                    expect((await branch._stepValue()).toString()).to.equal("100000000"); 
 
                     await branch.connect(owner).changeStepValue(200);
 
                     expect((await branch._stepValue()).toString()).to.equal("200"); 
                 });
 
-                it("changePrice", async function(){
-                    expect((await branch._priceToken()).toString()).to.equal("1"); 
-
-                    await branch.connect(owner).changePrice(200);
-
-                    expect((await branch._priceToken()).toString()).to.equal("200"); 
-                });
-
                 it("startFundraising", async function(){
-                    expect(await branch.getState()).to.equal(0); 
+                    expect(await branch._state()).to.equal(0); 
 
                     await branch.connect(owner).startFundraising();
 
-                    expect(await branch.getState()).to.equal(1); 
+                    expect(await branch._state()).to.equal(1); 
                 });
 
                 it("importTable", async function(){ 
@@ -109,11 +101,11 @@ const { duration } = require("@openzeppelin/test-helpers/src/time");
                 });
 
                 it("closeImport", async function() {
-                    expect(await branch.getState()).to.equal(0); 
+                    expect(await branch._state()).to.equal(0); 
 
                     await branch.connect(owner).closeImport();
 
-                    expect(await branch.getState()).to.equal(2); 
+                    expect(await branch._state()).to.equal(2); 
                 });
             });
 
@@ -139,18 +131,6 @@ const { duration } = require("@openzeppelin/test-helpers/src/time");
                         await branch.connect(owner).closeImport();
 
                         await expect(branch.connect(owner).changeStepValue(100)).to.be.reverted;
-                    });
-                });
-
-                describe("changePrice", async function(){
-                    it("If the caller is not the owner", async function(){
-                        await expect(branch.connect(addr1).changePrice(100)).to.be.reverted;
-                    });
-
-                    it("If called in an inappropriate state", async function(){
-                        await branch.connect(owner).closeImport();
-
-                        await expect(branch.connect(owner).changePrice(100)).to.be.reverted;
                     });
                 });
 
@@ -225,11 +205,11 @@ const { duration } = require("@openzeppelin/test-helpers/src/time");
 
             describe("Must be performed",async function(){
                 it("stopEmergency", async function(){
-                    expect(await branch.getState()).to.equal(1);
+                    expect(await branch._state()).to.equal(1);
 
                     await branch.connect(owner).stopEmergency();
 
-                    expect(await branch.getState()).to.equal(4);
+                    expect(await branch._state()).to.equal(4);
                 });
 
                 it("deposit", async function(){
@@ -241,15 +221,15 @@ const { duration } = require("@openzeppelin/test-helpers/src/time");
                 });
 
                 it("stopFundraising", async function(){
-                    expect(await branch.getState()).to.equal(1);
+                    expect(await branch._state()).to.equal(1);
 
                     await branch.connect(owner).stopFundraising();
     
-                    expect(await branch.getState()).to.equal(2);
+                    expect(await branch._state()).to.equal(2);
                 });
 
                 it("changeTargetValue", async function(){
-                    expect((await branch._VALUE()).toString()).to.equal("4500000000"); 
+                    expect((await branch._VALUE()).toString()).to.equal("4500000000000000"); 
 
                     await branch.connect(owner).changeTargetValue(5000);
 
@@ -257,19 +237,11 @@ const { duration } = require("@openzeppelin/test-helpers/src/time");
                 });
 
                 it("changeStepValue", async function(){
-                    expect((await branch._stepValue()).toString()).to.equal("100"); 
+                    expect((await branch._stepValue()).toString()).to.equal("100000000"); 
 
                     await branch.connect(owner).changeStepValue(200);
 
                     expect((await branch._stepValue()).toString()).to.equal("200"); 
-                });
-
-                it("changePrice", async function(){
-                    expect((await branch._priceToken()).toString()).to.equal("1"); 
-
-                    await branch.connect(owner).changePrice(200);
-
-                    expect((await branch._priceToken()).toString()).to.equal("200"); 
                 });
             });
 
@@ -286,7 +258,7 @@ const { duration } = require("@openzeppelin/test-helpers/src/time");
                         TOKEN = await ethers.getContractFactory("SimpleToken");
                         token = await TOKEN.deploy("Test", "TST", 10000);
                         await token.connect(owner).transfer(branch.address, 10000);
-                        await branch.connect(owner).entrustToken(token.address, 10000);
+                        await branch.connect(owner).entrustToken(token.address);
 
                         await expect(branch.connect(owner).stopEmergency()).to.be.reverted;
                     });
@@ -359,18 +331,6 @@ const { duration } = require("@openzeppelin/test-helpers/src/time");
                         await expect(branch.connect(owner).changeStepValue(100)).to.be.reverted;
                     });
                 });
-
-                describe("changePrice", async function(){
-                    it("If the caller is not the owner", async function(){
-                        await expect(branch.connect(addr1).changePrice(100)).to.be.reverted;
-                    });
-
-                    it("If called in an inappropriate state", async function(){
-                        await branch.connect(owner).stopFundraising();
-
-                        await expect(branch.connect(owner).changePrice(100)).to.be.reverted;
-                    });
-                });
             });
         });
 
@@ -385,14 +345,12 @@ const { duration } = require("@openzeppelin/test-helpers/src/time");
             });
             describe("Must be performed",async function(){
                 it("entrustToken", async function(){
-                    expect((await branch.getAllUnlocks()).length).to.equal(0);
-
                     TOKEN = await ethers.getContractFactory("SimpleToken");
                     token = await TOKEN.deploy("Test", "TST", 10000);
                     await token.connect(owner).transfer(branch.address, 10000);
-                    await branch.connect(owner).entrustToken(token.address, 10000);
+                    await branch.connect(owner).entrustToken(token.address);
 
-                    expect((await branch.getAllUnlocks()).length).to.equal(1);
+                    expect(await branch._token()).to.equal(token.address);
                 });
 
             });
@@ -403,28 +361,19 @@ const { duration } = require("@openzeppelin/test-helpers/src/time");
                         token = await TOKEN.deploy("Test", "TST", 10000);
                         await token.connect(owner).transfer(branch.address, 10000);
 
-                        await expect(branch.connect(addr1).entrustToken(token.address, 10000)).to.be.reverted;
-                    });
-
-                    it("If called in an inappropriate state", async function(){
-                        TOKEN = await ethers.getContractFactory("SimpleToken");
-                        token = await TOKEN.deploy("Test", "TST", 10000);
-                        await token.connect(owner).transfer(branch.address, 10000);
-                        await branch.connect(owner).entrustToken(token.address, 10000);
-
-                        await expect(branch.connect(owner).entrustToken(token.address, 10000)).to.be.reverted;
+                        await expect(branch.connect(addr1).entrustToken(token.address)).to.be.reverted;
                     });
 
                     it("If developers will try to distribute different tokens",async function() {
                         TOKEN = await ethers.getContractFactory("SimpleToken");
                         token = await TOKEN.deploy("Test", "TST", 10000);
                         await token.connect(owner).transfer(branch.address, 10000);
-                        await branch.connect(owner).entrustToken(token.address, 10000);
+                        await branch.connect(owner).entrustToken(token.address);
 
                         token2 = await TOKEN.deploy("Test", "TST", 10000);
                         await token2.connect(owner).transfer(branch.address, 10000);
                         
-                        await expect(branch.connect(owner).entrustToken(token2.address, 10000)).to.be.reverted;
+                        await expect(branch.connect(owner).entrustToken(token2.address)).to.be.reverted;
                     });
                 });
             });
@@ -441,13 +390,11 @@ const { duration } = require("@openzeppelin/test-helpers/src/time");
 
                 TOKEN = await ethers.getContractFactory("SimpleToken");
                 token = await TOKEN.deploy("Test", "TST", 10000);
+                await branch.connect(owner).entrustToken(token.address);
                 await token.connect(owner).transfer(branch.address, 10000);
-                await branch.connect(owner).entrustToken(token.address, 10000);
             });
             describe("Must be performed",async function() {
                 it("claim", async function(){
-                    expect((await branch.connect(owner).myCurrentAllocation(owner.address)).toString()).to.equal("10000");
-
                     await branch.connect(owner).claim();
 
                     expect((await branch.connect(owner).myCurrentAllocation(owner.address)).toString()).to.equal("0");
@@ -457,12 +404,6 @@ const { duration } = require("@openzeppelin/test-helpers/src/time");
                 describe("claim", async function(){
                     it("If the user has not funded the account, but tries to brandish", async function(){
                         await expect(branch.connect(addr1).claim()).to.be.reverted;
-                    });
-
-                    it("If the user tries to brand the tokens before the next unlock", async function(){
-                        await branch.connect(owner).claim()
-
-                        await expect(branch.connect(owner).claim()).to.be.reverted;
                     });
                 });
             });
