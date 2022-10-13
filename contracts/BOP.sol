@@ -263,9 +263,16 @@ contract BranchOfPools is Initializable {
     function preSend(uint256 amount)
         external
         onlyOwner
-        onlyState(State.Fundrasing)
+        onlyNotState(State.Pause)
+        onlyNotState(State.TokenDistribution)
+        onlyNotState(State.Emergency)
     {
         require(amount < _CURRENT_VALUE - _preSend);
+
+        if (_state == State.WaitingToken) {
+            uint256 balance = ERC20(_usd).balanceOf(address(this));
+            require(balance == _CURRENT_VALUE - _preSend);
+        }
 
         _preSend += amount;
 

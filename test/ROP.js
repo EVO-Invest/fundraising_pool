@@ -685,5 +685,31 @@ describe("Root of Pools", async function () {
       expect(await branch._state()).to.equal(4);
 
     });
+
+    it("Pre-shipment check", async function(){
+      await usdt.connect(owner).transfer(owner.address, 4500000000);
+
+      tx1 = await branch.populateTransaction.startFundraising();
+      tx2 = await root.populateTransaction.Calling("Test", tx1.data);
+      await msig.connect(owner).submitTransaction(root.address, 0, tx2.data);
+      id = (await msig.transactionCount()) - 1;
+      await msig.connect(addr1).confirmTransaction(id);
+
+      await usdt.connect(owner).approve(branch.address, 4500000000);
+
+      await root.connect(owner).deposit("Test",4500000000); 
+
+      expect(await branch._state()).to.equal(2);
+
+      tx1 = await branch.populateTransaction.preSend(500000000);
+      tx2 = await root.populateTransaction.Calling("Test", tx1.data);
+      await msig.connect(owner).submitTransaction(root.address, 0, tx2.data);
+      id = (await msig.transactionCount()) - 1;
+      await msig.connect(addr1).confirmTransaction(id);
+
+      expect((await usdt.balanceOf(devUSDT.address)).toString()).to.  equal(
+        "500000000"
+      );
+    });
   });
 });
