@@ -35,6 +35,8 @@ contract RootOfPools_v2 is Initializable, OwnableUpgradeable {
 
     mapping(address => bool) private _imageTable;
 
+    address public _distributor;
+
     event PoolCreated(string name, address pool);
     event ImageAdded(address image);
     event Response(address to, bool success, bytes data);
@@ -64,6 +66,10 @@ contract RootOfPools_v2 is Initializable, OwnableUpgradeable {
         __Ownable_init();
         _usdAddress = usdAddress;
         _rankingAddress = rankingAddress;
+    }
+
+    function changeDistributor(address newDstr) public onlyOwner {
+        _distributor = newDstr;
     }
 
     /// @notice Returns the address of the usd token in which funds are collected

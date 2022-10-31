@@ -9,6 +9,7 @@ import "@openzeppelin/contracts/utils/Address.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
 import "../contracts/ROP.sol";
+import "../contracts/Distribution.sol";
 
 /// @title The pool's subsidiary contract for fundraising.
 /// This contract collects funds, distributes them, and charges fees
@@ -28,15 +29,6 @@ contract BranchOfPools is Initializable {
         Emergency
     }
     State public _state = State.Pause;
-
-    //Events
-    event Deposit(address user, uint256 amount);
-    event Claim(address user);
-    event FundraisingOpened();
-    event FundraisingClosed();
-    event TokenEntrusted(address addrToken, uint256 amount);
-    event EmergencyStoped();
-    event FundsReturned(address user, uint256 amount);
 
     address public _owner;
     address private _root;
@@ -64,7 +56,20 @@ contract BranchOfPools is Initializable {
     address public _token;
     address public _devUSDAddress;
 
-    bool private _fundLock = false;
+    struct Member {
+        address awardsAddress;
+        uint256 amount;
+    }
+    address public _distributor;
+    mapping(string => Member) _team;
+    string[] public _teamToken;
+    string[] public _teamUSD;
+    uint256 public _teamShare;
+    uint256 public _currentTeamShare;
+
+    uint256 public _refferalVolume;
+
+    mapping(address => uint256) public _refferals;
 
     modifier onlyOwner() {
         require(msg.sender == _owner, "Ownable: Only owner");
@@ -106,6 +111,62 @@ contract BranchOfPools is Initializable {
         _VALUE = VALUE * _decimals;
         _stepValue = Step * _decimals;
         _devUSDAddress = devUSDAddress;
+
+        _distributor = RootOfPools_v2(_root)._distributor();
+        string[] memory team = Distribution(_distributor).getTeam();
+        for (uint256 i = 0; i < team.length; i++) {
+            Distribution.TeamMember memory member = Distribution(_distributor)
+                .getTeamMember(team[i]);
+
+            _team[team[i]].amount = (_VALUE * member.interest) / member.shift;
+            _team[team[i]].awardsAddress = member.addresses[
+                member.awardsAddress
+            ];
+            _teamShare += _team[team[i]].amount;
+            if (member.choice) {
+                //Receiving an award in tokens
+                _teamToken.push(team[i]);
+            } else {
+                //Receiving an award in usd
+                _teamUSD.push(team[i]);
+            }
+
+            _valueUSDList[_team[team[i]].awardsAddress] = _team[team[i]].amount;
+        }
+    }
+
+    function fillTeamShare(uint256 amount) public onlyState(State.Fundrasing) {
+        require(_currentTeamShare + amount <= _teamShare);
+
+        ERC20(_usd).transferFrom(tx.origin, address(this), amount);
+
+        _currentTeamShare += amount;
+
+        _CURRENT_VALUE += amount;
+    }
+
+    function getCommission() public onlyState(State.Fundrasing) {
+        if (_refferals[tx.origin] > 0) {
+            uint256 amount = _refferals[tx.origin];
+
+            _refferals[tx.origin] = 0;
+
+            ERC20(_usd).transfer(tx.origin, amount);
+
+            return;
+        }
+
+        for (uint256 i = 0; i < _teamUSD.length; i++) {
+            if (tx.origin == _team[_teamUSD[i]].awardsAddress) {
+                uint256 amount = _team[_teamUSD[i]].amount;
+
+                _team[_teamUSD[i]].amount = 0;
+
+                ERC20(_usd).transfer(tx.origin, amount);
+
+                return;
+            }
+        }
     }
 
     /// @notice Changes the target amount of funds we collect
@@ -117,6 +178,28 @@ contract BranchOfPools is Initializable {
         onlyNotState(State.WaitingToken)
     {
         _VALUE = value;
+
+        _teamShare = 0;
+
+        for (uint256 i = 0; i < _teamToken.length; i++) {
+            Distribution.TeamMember memory member = Distribution(_distributor)
+                .getTeamMember(_teamToken[i]);
+            _team[_teamToken[i]].amount =
+                (_VALUE * member.interest) /
+                member.shift;
+
+            _teamShare += _team[_teamToken[i]].amount;
+        }
+
+        for (uint256 i = 0; i < _teamUSD.length; i++) {
+            Distribution.TeamMember memory member = Distribution(_distributor)
+                .getTeamMember(_teamUSD[i]);
+            _team[_teamUSD[i]].amount =
+                (_VALUE * member.interest) /
+                member.shift;
+
+            _teamShare += _team[_teamUSD[i]].amount;
+        }
     }
 
     /// @notice Changes the step with which we raise funds
@@ -143,8 +226,6 @@ contract BranchOfPools is Initializable {
     /// @notice Opens fundraising
     function startFundraising() external onlyOwner onlyState(State.Pause) {
         _state = State.Fundrasing;
-
-        emit FundraisingOpened();
     }
 
     //TODO
@@ -164,11 +245,8 @@ contract BranchOfPools is Initializable {
         }
 
         _state = State.Emergency;
-
-        emit EmergencyStoped();
     }
 
-    //TODO
     /// @notice Returns the deposited funds to the caller
     /// @dev This is a bad way to write a transaction check,
     /// but in this case we are forced not to use require because of the usdt token implementation,
@@ -177,24 +255,13 @@ contract BranchOfPools is Initializable {
     function paybackEmergency() external onlyState(State.Emergency) {
         uint256 usdT = _usdEmergency[tx.origin];
 
-        _usdEmergency[tx.origin] = 0;
-
         if (usdT == 0) {
             revert("You have no funds to withdraw!");
         }
 
-        uint256 beforeBalance = ERC20(_usd).balanceOf(tx.origin);
-
-        emit FundsReturned(tx.origin, usdT);
+        _usdEmergency[tx.origin] = 0;
 
         ERC20(_usd).transfer(tx.origin, usdT);
-
-        uint256 afterBalance = ERC20(_usd).balanceOf(tx.origin);
-
-        require(
-            beforeBalance + usdT == afterBalance,
-            "PAYBACK: Something went wrong."
-        );
     }
 
     /// @notice The function of the deposit of funds.
@@ -223,23 +290,11 @@ contract BranchOfPools is Initializable {
 
         require((amount) % _stepValue == 0, "DEPOSIT: Must match the step!");
         require(
-            _CURRENT_VALUE + amount - commission <= _VALUE,
+            _CURRENT_VALUE + amount - commission <= _VALUE - _teamShare,
             "DEPOSIT: Fundraising goal exceeded!"
         );
 
-        emit Deposit(tx.origin, amount);
-
-        uint256 pre_balance = ERC20(_usd).balanceOf(address(this));
-
-        require(
-            ERC20(_usd).allowance(tx.origin, address(this)) >= amount,
-            "DEPOSIT: ALLOW ERROR"
-        );
-
-        require(
-            ERC20(_usd).transferFrom(tx.origin, address(this), amount),
-            "DEPOSIT: Transfer error"
-        );
+        ERC20(_usd).transferFrom(tx.origin, address(this), amount);
         _usdEmergency[tx.origin] += amount;
 
         if (_valueUSDList[tx.origin] == 0) {
@@ -250,14 +305,25 @@ contract BranchOfPools is Initializable {
         _CURRENT_COMMISSION += commission;
         _CURRENT_VALUE += amount - commission;
 
-        require(
-            pre_balance + amount == ERC20(_usd).balanceOf(address(this)),
-            "DEPOSIT: Something went wrong"
-        );
-
         if (_CURRENT_VALUE == _VALUE) {
             _state = State.WaitingToken;
-            emit FundraisingClosed();
+        }
+
+        //Referral part
+        Distribution.Member memory member = Distribution(_distributor)
+            .getMember(tx.origin);
+        if (member.owner != address(0)) {
+            Distribution.ReferralOwner memory ownerMember = Distribution(
+                _distributor
+            ).getOwnerMember(member.owner);
+
+            _refferals[ownerMember.addresses[ownerMember.awardsAddress]] =
+                (amount * member.interest) /
+                member.shift;
+
+            _refferalVolume += _refferals[
+                ownerMember.addresses[ownerMember.awardsAddress]
+            ];
         }
     }
 
@@ -277,13 +343,9 @@ contract BranchOfPools is Initializable {
 
         _preSend += amount;
 
-        require(
-            ERC20(_usd).transfer(_devUSDAddress, amount),
-            "COLLECT: Transfer error"
-        );
+        ERC20(_usd).transfer(_devUSDAddress, amount);
     }
 
-    //TODO
     /// @notice Closes the fundraiser and distributes the funds raised
     /// Allows you to close the fundraiser before the fundraising amount is reached
     function stopFundraising()
@@ -298,8 +360,6 @@ contract BranchOfPools is Initializable {
             _FUNDS_RAISED = _CURRENT_VALUE;
             _VALUE = _CURRENT_VALUE;
             _CURRENT_VALUE = 0;
-
-            emit FundraisingClosed();
         } else {
             require(
                 _CURRENT_VALUE == _VALUE,
@@ -311,18 +371,17 @@ contract BranchOfPools is Initializable {
         }
 
         //Send to devs
-        require(
-            ERC20(_usd).transfer(_devUSDAddress, _FUNDS_RAISED - _preSend),
-            "COLLECT: Transfer error"
-        );
+        ERC20(_usd).transfer(_devUSDAddress, _FUNDS_RAISED - _preSend);
+
+        uint256 forTeam;
+        for (uint256 i = 0; i < _teamUSD.length; i++) {
+            forTeam += _team[_teamUSD[i]].amount;
+        }
 
         //Send to admin
-        require(
-            ERC20(_usd).transfer(
-                RootOfPools_v2(_root).owner(),
-                ERC20(_usd).balanceOf(address(this))
-            ),
-            "COLLECT: Transfer error"
+        ERC20(_usd).transfer(
+            RootOfPools_v2(_root).owner(),
+            ERC20(_usd).balanceOf(address(this)) - _refferalVolume - forTeam
         );
     }
 
@@ -341,87 +400,9 @@ contract BranchOfPools is Initializable {
             "ENTRUST: The tokenAddr must not be zero."
         );
 
-        if (_token == address(0)) {
-            _token = tokenAddr;
-        } else {
-            require(
-                tokenAddr == _token,
-                "ENTRUST: The tokens have only one contract"
-            );
-        }
+        _token = tokenAddr;
 
         _state = State.TokenDistribution;
-    }
-
-    //TODO
-    /// @notice Allows you to transfer data about pool members
-    /// This is necessary to perform token distribution in another network
-    /// @dev the arrays of participants and their investments must be the same size.
-    /// Make sure that the order of both arrays is correct,
-    /// if the order is wrong, the resulting investment table will not match reality
-    /// @param usersData - Participant array
-    /// @param usersAmount - The size of participants' investments
-    function importTable(
-        address[] calldata usersData,
-        uint256[] calldata usersAmount
-    ) external onlyState(State.Pause) onlyOwner returns (bool) {
-        require(
-            usersData.length == usersAmount.length,
-            "IMPORT: The number not match!"
-        );
-
-        for (uint256 i; i < usersData.length; i++) {
-            _valueUSDList[usersData[i]] = usersAmount[i];
-        }
-
-        //Not all information is transferred to save gas
-        //Implications: It is not possible to fully import data from here
-        //To capture all the information you need to replenish this array with the right users
-        //_listParticipants = usersData;
-
-        return true;
-    }
-
-    //TODO
-    /// @notice Allows you to transfer data about pool members
-    /// This is necessary to perform token distribution in another network
-    /// @param fundsRaised - Number of funds raised
-    function importFR(uint256 fundsRaised)
-        external
-        onlyState(State.Pause)
-        onlyOwner
-        returns (bool)
-    {
-        _FUNDS_RAISED = fundsRaised;
-        return true;
-    }
-
-    //TODO
-    /// @notice Allows you to transfer data about pool members
-    /// This is necessary to perform token distribution in another network
-    /// @param collectedCommission - Number of commissions collected
-    function importCC(uint256 collectedCommission)
-        external
-        onlyState(State.Pause)
-        onlyOwner
-        returns (bool)
-    {
-        _CURRENT_COMMISSION = collectedCommission;
-        return true;
-    }
-
-    //TODO
-    /// @notice Allows you to transfer data about pool members
-    /// This is necessary to perform token distribution in another network
-    function closeImport()
-        external
-        onlyState(State.Pause)
-        onlyOwner
-        returns (bool)
-    {
-        _state = State.WaitingToken;
-
-        return true;
     }
 
     //TODO
@@ -454,29 +435,8 @@ contract BranchOfPools is Initializable {
         _CURRENT_VALUE_TOKEN -= amount;
 
         if (amount > 0) {
-            emit Claim(tx.origin);
-            uint256 pre_balance = ERC20(_token).balanceOf(address(this));
-
-            require(
-                ERC20(_token).transfer(tx.origin, amount),
-                "CLAIM: Transfer error"
-            );
-
-            require(
-                ERC20(_token).balanceOf(address(this)) == pre_balance - amount,
-                "CLAIM: Something went wrong!"
-            );
+            ERC20(_token).transfer(tx.origin, amount);
         }
-
-        if (_fundLock == false) {
-            _fundLock = true;
-        }
-    }
-
-    /// @notice Returns the amount of money that the user has deposited excluding the commission
-    /// @param user - address user
-    function myAllocation(address user) external view returns (uint256) {
-        return _valueUSDList[user];
     }
 
     /// @notice Returns the amount of funds that the user deposited
