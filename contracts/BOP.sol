@@ -67,6 +67,8 @@ contract BranchOfPools is Initializable {
     uint256 public _teamShare;
     uint256 public _currentTeamShare;
 
+    uint256 public _unlockTime;
+
     uint256 public _refferalVolume;
 
     mapping(address => uint256) public _refferals;
@@ -96,7 +98,8 @@ contract BranchOfPools is Initializable {
         uint256 VALUE,
         uint256 Step,
         address devUSDAddress,
-        address tokenUSD
+        address tokenUSD,
+        uint256 unlockTime
     ) external initializer {
         require(Root != address(0), "The root address must not be zero.");
         require(
@@ -111,6 +114,7 @@ contract BranchOfPools is Initializable {
         _VALUE = VALUE * _decimals;
         _stepValue = Step * _decimals;
         _devUSDAddress = devUSDAddress;
+        _unlockTime = unlockTime;
 
         _distributor = RootOfPools_v2(_root)._distributor();
         string[] memory team = Distribution(_distributor).getTeam();
@@ -145,7 +149,8 @@ contract BranchOfPools is Initializable {
         _CURRENT_VALUE += amount;
     }
 
-    function getCommission() public onlyState(State.Fundrasing) {
+    function getCommission() public {
+        require(block.timestamp >= _unlockTime);
         if (_refferals[tx.origin] > 0) {
             uint256 amount = _refferals[tx.origin];
 
@@ -228,7 +233,6 @@ contract BranchOfPools is Initializable {
         _state = State.Fundrasing;
     }
 
-    //TODO
     /// @notice Termination of fundraising and opening the possibility of refunds to depositors
     function stopEmergency()
         external
@@ -317,7 +321,7 @@ contract BranchOfPools is Initializable {
                 _distributor
             ).getOwnerMember(member.owner);
 
-            _refferals[ownerMember.addresses[ownerMember.awardsAddress]] =
+            _refferals[ownerMember.addresses[ownerMember.awardsAddress]] +=
                 (amount * member.interest) /
                 member.shift;
 
@@ -355,20 +359,13 @@ contract BranchOfPools is Initializable {
         onlyNotState(State.TokenDistribution)
         onlyNotState(State.Emergency)
     {
-        if (_state == State.Fundrasing) {
-            _state = State.WaitingToken;
-            _FUNDS_RAISED = _CURRENT_VALUE;
-            _VALUE = _CURRENT_VALUE;
-            _CURRENT_VALUE = 0;
-        } else {
-            require(
-                _CURRENT_VALUE == _VALUE,
-                "COLLECT: The funds have already been withdrawn."
-            );
+        require(
+            _CURRENT_VALUE == _VALUE,
+            "COLLECT: The funds have already been withdrawn."
+        );
 
-            _FUNDS_RAISED = _CURRENT_VALUE;
-            _CURRENT_VALUE = 0;
-        }
+        _FUNDS_RAISED = _CURRENT_VALUE;
+        _CURRENT_VALUE = 0;
 
         //Send to devs
         ERC20(_usd).transfer(_devUSDAddress, _FUNDS_RAISED - _preSend);
