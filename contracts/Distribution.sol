@@ -109,7 +109,9 @@ contract Distribution is Ownable {
         return memberTable[member];
     }
 
-    function setOwner(address _owner) public {
+    function approveNewWallet(address _owner) public {
+        require(memberTable[msg.sender].owner == address(0));
+        require(msg.sender != _owner);
         memberTable[msg.sender].owner = _owner;
     }
 
