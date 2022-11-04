@@ -64,7 +64,7 @@ contract BranchOfPools is Initializable {
     mapping(string => Member) _team;
     string[] public _teamToken;
     string[] public _teamUSD;
-    uint256 public _teamShare;
+    uint256 public _teamShare; //How much money does the team need in tokens
     uint256 public _currentTeamShare;
 
     uint256 public _unlockTime;
@@ -126,10 +126,11 @@ contract BranchOfPools is Initializable {
             _team[team[i]].awardsAddress = member.addresses[
                 member.awardsAddress
             ];
-            _teamShare += _team[team[i]].amount;
+
             if (member.choice) {
                 //Receiving an award in tokens
                 _teamToken.push(team[i]);
+                _teamShare += _team[team[i]].amount;
             } else {
                 //Receiving an award in usd
                 _teamUSD.push(team[i]);
@@ -202,8 +203,6 @@ contract BranchOfPools is Initializable {
             _team[_teamUSD[i]].amount =
                 (_VALUE * member.interest) /
                 member.shift;
-
-            _teamShare += _team[_teamUSD[i]].amount;
         }
     }
 
@@ -321,13 +320,13 @@ contract BranchOfPools is Initializable {
                 _distributor
             ).getOwnerMember(member.owner);
 
-            _refferals[ownerMember.addresses[ownerMember.awardsAddress]] +=
-                (amount * member.interest) /
-                member.shift;
+            uint256 forDistribution = (amount * member.interest) / member.shift;
 
-            _refferalVolume += _refferals[
+            _refferals[
                 ownerMember.addresses[ownerMember.awardsAddress]
-            ];
+            ] += forDistribution;
+
+            _refferalVolume += forDistribution;
         }
     }
 
