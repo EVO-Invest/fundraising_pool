@@ -129,7 +129,7 @@ contract Distribution is Ownable {
                     if (refferalOwnerTable[owner].members[j] == members[i]) {
                         refferalOwnerTable[owner].members[
                             j
-                        ] = refferalOwnerTable[owner].members[length];
+                        ] = refferalOwnerTable[owner].members[length - 1];
 
                         refferalOwnerTable[owner].members.pop();
                     }
