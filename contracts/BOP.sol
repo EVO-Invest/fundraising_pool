@@ -401,7 +401,6 @@ contract BranchOfPools is Initializable {
         _state = State.TokenDistribution;
     }
 
-    //TODO
     /// @notice Allows users to brand the distributed tokens
     function claim() external onlyState(State.TokenDistribution) {
         require(

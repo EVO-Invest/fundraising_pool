@@ -113,6 +113,8 @@ contract Distribution is Ownable {
         require(memberTable[msg.sender].owner == address(0));
         require(msg.sender != _owner);
         memberTable[msg.sender].owner = _owner;
+
+        refferalOwnerTable[_owner].members.push(msg.sender);
     }
 
     function setOwners(address[] calldata members, address _owner)
@@ -120,7 +122,23 @@ contract Distribution is Ownable {
         onlyOwner
     {
         for (uint256 i = 0; i < members.length; i++) {
+            if (memberTable[members[i]].owner != address(0)) {
+                address owner = memberTable[members[i]].owner;
+                uint256 length = refferalOwnerTable[owner].members.length;
+                for (uint256 j = 0; j < length; j++) {
+                    if (refferalOwnerTable[owner].members[j] == members[i]) {
+                        refferalOwnerTable[owner].members[
+                            j
+                        ] = refferalOwnerTable[owner].members[length];
+
+                        refferalOwnerTable[owner].members.pop();
+                    }
+                }
+            }
+
             memberTable[members[i]].owner = _owner;
+
+            refferalOwnerTable[_owner].members.push(members[i]);
         }
     }
 
@@ -140,6 +158,7 @@ contract Distribution is Ownable {
     struct ReferralOwner {
         uint256 awardsAddress;
         address[] addresses;
+        address[] members;
     }
 
     mapping(address => ReferralOwner) public refferalOwnerTable;
@@ -159,5 +178,17 @@ contract Distribution is Ownable {
     function chooseAddressReferral(uint256 _choice) public {
         require(_choice < refferalOwnerTable[msg.sender].addresses.length);
         refferalOwnerTable[msg.sender].awardsAddress = _choice;
+    }
+
+    function changeMembers(
+        address _owner,
+        uint256 _interest,
+        uint256 _shift
+    ) public onlyOwner {
+        address[] memory members = refferalOwnerTable[_owner].members;
+        for (uint256 i = 0; i < members.length; i++) {
+            memberTable[members[i]].interest = _interest;
+            memberTable[members[i]].shift = _shift;
+        }
     }
 }
