@@ -71,6 +71,8 @@ contract BranchOfPools is Initializable {
 
     uint256 public _refferalVolume;
 
+    bool private _getCommissionFlag;
+
     mapping(address => uint256) public _refferals;
 
     modifier onlyOwner() {
@@ -151,7 +153,11 @@ contract BranchOfPools is Initializable {
     }
 
     function getCommission() public {
-        if (msg.sender == _owner && _state == State.WaitingToken) {
+        if (
+            msg.sender == _owner &&
+            _state == State.WaitingToken &&
+            !_getCommissionFlag
+        ) {
             uint256 forTeam;
             for (uint256 i = 0; i < _teamUSD.length; i++) {
                 forTeam += _team[_teamUSD[i]].amount;
@@ -162,6 +168,7 @@ contract BranchOfPools is Initializable {
                 RootOfPools_v2(_root).owner(),
                 ERC20(_usd).balanceOf(address(this)) - _refferalVolume - forTeam
             );
+            _getCommissionFlag = true;
             return;
         }
 
