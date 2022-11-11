@@ -151,7 +151,24 @@ contract BranchOfPools is Initializable {
     }
 
     function getCommission() public {
-        require(block.timestamp >= _unlockTime);
+        if (msg.sender == _owner && _state == State.WaitingToken) {
+            uint256 forTeam;
+            for (uint256 i = 0; i < _teamUSD.length; i++) {
+                forTeam += _team[_teamUSD[i]].amount;
+            }
+
+            //Send to admin
+            ERC20(_usd).transfer(
+                RootOfPools_v2(_root).owner(),
+                ERC20(_usd).balanceOf(address(this)) - _refferalVolume - forTeam
+            );
+            return;
+        }
+
+        require(
+            (block.timestamp >= _unlockTime) ||
+                (_state == State.TokenDistribution)
+        );
         if (_refferals[tx.origin] > 0) {
             uint256 amount = _refferals[tx.origin];
 
@@ -368,17 +385,6 @@ contract BranchOfPools is Initializable {
 
         //Send to devs
         ERC20(_usd).transfer(_devUSDAddress, _FUNDS_RAISED - _preSend);
-
-        uint256 forTeam;
-        for (uint256 i = 0; i < _teamUSD.length; i++) {
-            forTeam += _team[_teamUSD[i]].amount;
-        }
-
-        //Send to admin
-        ERC20(_usd).transfer(
-            RootOfPools_v2(_root).owner(),
-            ERC20(_usd).balanceOf(address(this)) - _refferalVolume - forTeam
-        );
     }
 
     /// @notice Allows developers to transfer tokens for distribution to contributors
