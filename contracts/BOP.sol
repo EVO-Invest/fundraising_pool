@@ -155,7 +155,8 @@ contract BranchOfPools is Initializable {
     function getCommission() public {
         if (
             msg.sender == _owner &&
-            _state == State.WaitingToken &&
+            ((_state == State.WaitingToken) ||
+                (_state == State.TokenDistribution)) &&
             !_getCommissionFlag
         ) {
             uint256 forTeam;
