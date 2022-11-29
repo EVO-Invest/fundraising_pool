@@ -59,7 +59,12 @@ describe("Root of Pools", async function () {
       initializer: "initialize",
     });
 
+    UnionWallet = await ethers.getContractFactory("UnionWallet");
+    unionwallet = await upgrades.deployProxy(UnionWallet);
+    await unionwallet.deployed();
+
     await root.deployed();
+    await root.changeUnionWallet(unionwallet.address);
 
     Branch = await ethers.getContractFactory("BranchOfPools");
     example = await Branch.deploy();

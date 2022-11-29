@@ -132,6 +132,8 @@ contract BranchOfPools is Initializable {
 
         _distributor = RewardDistributor(RootOfPools_v2(_root)._distributor());
         _unionWallet = UnionWallet(RootOfPools_v2(_root)._unionWallet());
+
+        _distributor.snapshot();
     }
 
     function getCommission() public {
@@ -225,9 +227,10 @@ contract BranchOfPools is Initializable {
         uint256 Min = _decimals * rank[0];
         uint256 Max = _decimals * rank[1];
 
-        require(amount >= Min, "DEPOSIT: Too little funding!");
-        require(amount + _valueUSDList[user] <= Max, "DEPOSIT: Too many funds!");
-        require(amount % _stepValue == 0, "DEPOSIT: Must match the step!");
+        require(amount >= Min && 
+                amount + _valueUSDList[user] <= Max &&
+                amount % _stepValue == 0,
+                "DEPOSIT: Wrong funding!");
 
         uint256 commission = 0;
         uint256 heldUsd = 0;

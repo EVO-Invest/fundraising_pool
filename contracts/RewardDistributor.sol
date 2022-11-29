@@ -86,6 +86,7 @@ contract RewardDistributor is Initializable, OwnableUpgradeable {
 
         address referrer = refInfos[user].referrer;
         bool isNormalReferrer = (referrer == address(0x0)) || (refInfos[referrer].comissionOverride == 0);
+        referrer = (referrer == address(0x0)) ? owner() : referrer;
         bool isNormalUser = (ranking._rankTable(user) == 0);
         
         // Referrer receive their share of comission first.
