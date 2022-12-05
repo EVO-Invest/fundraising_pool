@@ -135,7 +135,6 @@ contract RewardDistributor is Initializable, OwnableUpgradeable {
         placements[index] = ComissionPlacement.STABLE_POST_FUND_CLOSE;
         addresses[index] = owner();
         amounts[index] = commission;
-        index += 1;
     }
 
     modifier fromTrustedSource() {
@@ -146,5 +145,9 @@ contract RewardDistributor is Initializable, OwnableUpgradeable {
 
     function setReferral(address user, address referral) public fromTrustedSource {
         refInfos[unionwallet.resolveIdentity(user)] = ReferralComissionInfo(0, unionwallet.resolveIdentity(referral));
+    }
+
+    function setMyReferra(address referral) public {
+        refInfos[unionwallet.resolveIdentity(msg.sender)] = ReferralComissionInfo(0, unionwallet.resolveIdentity(referral));
     }
 }

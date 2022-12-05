@@ -221,6 +221,8 @@ contract BranchOfPools is Initializable {
     /// the amount must be approved for THIS address
     /// @param amount - The number of funds the user wants to deposit
     function deposit(uint256 amount) external onlyState(State.Fundraising) {
+        _usd.transferFrom(msg.sender, address(this), amount);
+
         address user = _unionWallet.resolveIdentity(msg.sender);
         uint256[] memory rank = Ranking(RootOfPools_v2(_root)._rankingAddress())
             .getParRankOfUser(user);
@@ -258,7 +260,6 @@ contract BranchOfPools is Initializable {
         _CURRENT_VALUE += amount - heldUsd;
         require(_CURRENT_VALUE <= _VALUE, "DEPOSIT: Fundraising goal exceeded!");
 
-        _usd.transferFrom(msg.sender, address(this), amount);
         _usdEmergency[user] += amount;
         _valueUSDList[user] += amount - commission;
 
