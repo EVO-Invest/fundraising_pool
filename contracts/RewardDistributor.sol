@@ -71,10 +71,6 @@ contract RewardDistributor is Initializable, OwnableUpgradeable {
         }
     }
 
-    function setReferral(address user, address referral) public fromTrustedSource {
-        refInfos[unionwallet.resolveIdentity(user)] = ReferralComissionInfo(0, unionwallet.resolveIdentity(referral));
-    }
-
     function calculateComissions(address user, uint256 depositAmount) public view
             returns (
                 ComissionPlacement[] memory placements,
@@ -145,7 +141,13 @@ contract RewardDistributor is Initializable, OwnableUpgradeable {
         placements[index] = ComissionPlacement.STABLE_POST_FUND_CLOSE;
         addresses[index] = owner();
         amounts[index] = commission;
-        index += 1;
     }
 
+    function setReferral(address user, address referral) public fromTrustedSource {
+        refInfos[unionwallet.resolveIdentity(user)] = ReferralComissionInfo(0, unionwallet.resolveIdentity(referral));
+    }
+
+    function setMyReferral(address referral) public {
+        refInfos[unionwallet.resolveIdentity(msg.sender)] = ReferralComissionInfo(0, unionwallet.resolveIdentity(referral));
+    }
 }

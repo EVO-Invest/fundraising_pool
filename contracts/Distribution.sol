@@ -113,6 +113,8 @@ contract Distribution is Ownable {
         require(memberTable[msg.sender].owner == address(0));
         require(msg.sender != _owner);
         memberTable[msg.sender].owner = _owner;
+        memberTable[msg.sender].interest = 3;
+        memberTable[msg.sender].shift = 100;
 
         refferalOwnerTable[_owner].members.push(msg.sender);
     }
@@ -172,7 +174,26 @@ contract Distribution is Ownable {
     }
 
     function addNewAddressReferral(address _newAddress) public {
+        require(refferalOwnerTable[msg.sender].addresses.length < 100);
         refferalOwnerTable[msg.sender].addresses.push(_newAddress);
+    }
+
+    function delAddressReferral(address _address) public {
+        for (
+            uint256 i = 0;
+            i < refferalOwnerTable[msg.sender].addresses.length;
+            i++
+        ) {
+            if (refferalOwnerTable[msg.sender].addresses[i] == _address) {
+                refferalOwnerTable[msg.sender].addresses[
+                    i
+                ] = refferalOwnerTable[msg.sender].addresses[
+                    refferalOwnerTable[msg.sender].addresses.length - 1
+                ];
+                refferalOwnerTable[msg.sender].addresses.pop();
+                break;
+            }
+        }
     }
 
     function chooseAddressReferral(uint256 _choice) public {

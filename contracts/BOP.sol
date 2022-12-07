@@ -39,10 +39,19 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
     uint256 private _decimals;
     uint256 public _preSend;
 
+    // _VALUE - is the amount of USD we are planning to collect.
+    // _CURRENT_VALUE - is the amount of USD we are ready to send right now.
+    //     _CURRENT_VALUE = sum(deposits) 
+    //                      - sum(commissions_for_owners_and_usd_team)
+    //                      + sum(commissions_for_token_team).
+    // _TOTAL_COMMISSIONS - is the total amount of money we need to subtract.
+    //     The trick here is that sum(commissions_for_owners_and_usd_team) +
+    //     sum(commissions_for_token_team) could be higher than the amount of
+    //     already collected comissions. We should not allow to close the pool
+    //     when we are in dept.
     uint256 public _CURRENT_VALUE;
     uint256 public _FUNDS_RAISED;
     uint256 public _DISTRIBUTED_TOKEN;
-    uint256 public _TOKEN_COMMISSION;
 
     mapping(address => uint256) public _valueUSDList;
 
@@ -226,7 +235,6 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
         _CURRENT_VALUE += amount - heldUsd;
         require(_CURRENT_VALUE <= _VALUE, "DEPOSIT: Fundraising goal exceeded!");
 
-        _usd.transferFrom(msg.sender, address(this), amount);
         _usdEmergency[user] += amount;
         _valueUSDList[user] += amount - commission;
 
