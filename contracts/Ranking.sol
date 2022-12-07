@@ -36,11 +36,9 @@ contract Ranking is Ownable {
     /// @dev To make it easier to change the ranks of a large number of users
     /// For the admin only
     /// @param users - an array of users to assign a rank to, rank - the name of the title to be awarded
-    /// @return bool (On successful execution returns true)
     function giveRanks(address[] memory users, string memory rank)
         public
         onlyOwner
-        returns (bool)
     {
         uint256 index = searchRank(rank);
 
@@ -48,23 +46,6 @@ contract Ranking is Ownable {
             _rankTable[users[i]] = index;
         }
 
-        return true;
-    }
-
-    /// @notice Give a user the rank
-    /// @dev For the admin only
-    /// @param user - the address of the user to whom you want to assign a rank, rank - the name of the title to be awarded
-    /// @return bool (On successful execution returns true)
-    function giveRank(address user, string memory rank)
-        public
-        onlyOwner
-        returns (bool)
-    {
-        uint256 index = searchRank(rank);
-
-        _rankTable[user] = index;
-
-        return true;
     }
 
     /// @notice Сreate the rank
@@ -73,13 +54,12 @@ contract Ranking is Ownable {
     /// @param pNames[] - An array of parameter names
     /// @param pValues[] - An array of parameter values
     /// @param isChangeable - Flag of rank variability
-    /// @return bool (On successful execution returns true)
     function createRank(
         string memory Name,
         string[] memory pNames,
         uint256[] memory pValues,
         bool isChangeable
-    ) public onlyOwner returns (bool) {
+    ) public onlyOwner {
         require(
             pNames.length == pValues.length,
             "RANK: Each parameter must have a value!"
@@ -91,7 +71,6 @@ contract Ranking is Ownable {
 
         _ranks.push(rank);
         _ranksHead++;
-        return true;
     }
 
     /// @notice Сhange the rank
@@ -100,14 +79,12 @@ contract Ranking is Ownable {
     /// @param pNames[] - An array of parameter names
     /// @param pValues[] - An array of parameter values
     /// @param isChangeable - Flag of rank variability
-    /// @return bool (On successful execution returns true)
     function changeRank(
         string memory Name,
         string[] memory pNames,
         uint256[] memory pValues,
         bool isChangeable
-    ) public onlyOwner returns (bool) {
-        require(_ranks.length > 0, "RANK: There are no ranks.");
+    ) public onlyOwner {
         require(
             pNames.length == pValues.length,
             "RANK: Each parameter must have a value!"
@@ -120,8 +97,6 @@ contract Ranking is Ownable {
         );
 
         _ranks[index] = Rank(Name, pNames, pValues, isChangeable);
-
-        return true;
     }
 
     /// @notice Сhange only the names of the rank parameters
@@ -129,14 +104,10 @@ contract Ranking is Ownable {
     /// If the rank is variable
     /// @param Name - Unique rank identifier
     /// @param pNames[] - An array of parameter names
-    /// @return bool (On successful execution returns true)
     function changeRankParNames(string memory Name, string[] memory pNames)
         public
         onlyOwner
-        returns (bool)
     {
-        require(_ranks.length > 0, "RANK: There are no ranks.");
-
         uint256 index = searchRank(Name);
         require(
             _ranks[index].isChangeable,
@@ -148,7 +119,6 @@ contract Ranking is Ownable {
         );
 
         _ranks[index].pNames = pNames;
-        return true;
     }
 
     /// @notice Сhange only the values of the rank parameters
@@ -156,14 +126,10 @@ contract Ranking is Ownable {
     /// If the rank is variable
     /// @param Name - Unique rank identifier
     /// @param pValues[] - An array of parameter values
-    /// @return bool (On successful execution returns true)
     function changeRankParValues(string memory Name, uint256[] memory pValues)
         public
         onlyOwner
-        returns (bool)
     {
-        require(_ranks.length > 0, "RANK: There are no ranks.");
-
         uint256 index = searchRank(Name);
         require(
             _ranks[index].isChangeable,
@@ -175,17 +141,13 @@ contract Ranking is Ownable {
         );
 
         _ranks[index].pValues = pValues;
-        return true;
     }
 
     /// @notice Blocks rank variability
     /// @dev For the admin only
     /// If the rank is variable
     /// @param Name - Unique rank identifier
-    /// @return bool (On successful execution returns true)
-    function lockRank(string memory Name) public onlyOwner returns (bool) {
-        require(_ranks.length > 0, "RANK: There are no ranks.");
-
+    function lockRank(string memory Name) public onlyOwner  {
         uint256 index = searchRank(Name);
         require(
             _ranks[index].isChangeable,
@@ -193,7 +155,6 @@ contract Ranking is Ownable {
         );
 
         _ranks[index].isChangeable = false;
-        return true;
     }
 
     /// @notice Renames the rank parameter
@@ -202,14 +163,11 @@ contract Ranking is Ownable {
     /// @param Name - Unique rank identifier
     /// @param NewParName - New parameter name
     /// @param NumberPar - The number of the parameter you want to change
-    /// @return bool (On successful execution returns true)
     function renameRankParam(
         string memory Name,
         string memory NewParName,
         uint256 NumberPar
-    ) public onlyOwner returns (bool) {
-        require(_ranks.length > 0, "RANK: There are no ranks.");
-
+    ) public onlyOwner {
         uint256 index = searchRank(Name);
         require(
             _ranks[index].isChangeable,
@@ -221,7 +179,6 @@ contract Ranking is Ownable {
         );
 
         _ranks[index].pNames[NumberPar] = NewParName;
-        return true;
     }
 
     /// @notice Change the rank parameter
@@ -230,14 +187,11 @@ contract Ranking is Ownable {
     /// @param Name - Unique rank identifier
     /// @param NewValue - New parameter value
     /// @param NumberPar - The number of the parameter you want to change
-    /// @return bool (On successful execution returns true)
     function changeRankParam(
         string memory Name,
         uint32 NewValue,
         uint256 NumberPar
-    ) public onlyOwner returns (bool) {
-        require(_ranks.length > 0, "RANK: There are no ranks.");
-
+    ) public onlyOwner {
         uint256 index = searchRank(Name);
         require(
             _ranks[index].isChangeable,
@@ -249,7 +203,6 @@ contract Ranking is Ownable {
         );
 
         _ranks[index].pValues[NumberPar] = NewValue;
-        return true;
     }
 
     /// @notice Renames the rank
@@ -257,14 +210,10 @@ contract Ranking is Ownable {
     /// If the rank is variable
     /// @param Name - Unique rank identifier
     /// @param NewName - New rank name
-    /// @return bool (On successful execution returns true)
     function renameRank(string memory Name, string memory NewName)
         public
         onlyOwner
-        returns (bool)
     {
-        require(_ranks.length > 0, "RANK: There are no ranks.");
-
         uint256 index = searchRank(Name);
         require(
             _ranks[index].isChangeable,
@@ -275,8 +224,6 @@ contract Ranking is Ownable {
 
         _rankSequence[Name] = 0;
         _rankSequence[NewName] = index;
-
-        return true;
     }
 
     /// @notice Searches for a rank by its name
@@ -284,6 +231,8 @@ contract Ranking is Ownable {
     /// @param Name - Unique rank identifier
     /// @return uint256 (Returns the number of the title you are looking for, or discards Rank not found)
     function searchRank(string memory Name) internal view returns (uint256) {
+        require(_ranks.length > 0, "RANK: There are no ranks.");
+
         uint256 temp = _rankSequence[Name];
         if (temp < _ranksHead) {
             return temp;

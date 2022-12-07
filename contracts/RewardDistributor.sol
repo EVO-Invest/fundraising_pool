@@ -45,6 +45,12 @@ contract RewardDistributor is Initializable, OwnableUpgradeable {
     TeamMemberRewardInfo[] team;
     mapping(address => TeamMemberRewardInfo[]) teamSnapshots;  // per BOP
 
+    modifier fromTrustedSource() {
+        require(msg.sender == gateway || msg.sender == owner(),
+                "Only messages from gateways are accepted");
+        _;
+    }
+
     function initialize(address _gateway, UnionWallet _unionwallet, Ranking _ranking)
         external
         initializer
@@ -63,6 +69,10 @@ contract RewardDistributor is Initializable, OwnableUpgradeable {
         for (uint256 i = 0; i < team.length; ++i) {
             teamSnapshots[bop].push(team[i]);
         }
+    }
+
+    function setReferral(address user, address referral) public fromTrustedSource {
+        refInfos[unionwallet.resolveIdentity(user)] = ReferralComissionInfo(0, unionwallet.resolveIdentity(referral));
     }
 
     function calculateComissions(address user, uint256 depositAmount) public view
@@ -138,13 +148,4 @@ contract RewardDistributor is Initializable, OwnableUpgradeable {
         index += 1;
     }
 
-    modifier fromTrustedSource() {
-        require(msg.sender == gateway || msg.sender == owner(),
-                "Only messages from gateways are accepted");
-        _;
-    }
-
-    function setReferral(address user, address referral) public fromTrustedSource {
-        refInfos[unionwallet.resolveIdentity(user)] = ReferralComissionInfo(0, unionwallet.resolveIdentity(referral));
-    }
 }

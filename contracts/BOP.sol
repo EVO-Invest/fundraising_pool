@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
 import "../contracts/ROP.sol";
 import "../contracts/RewardDistributor.sol";
@@ -18,7 +19,7 @@ import "../contracts/UnionWallet.sol";
 /// @dev This contract pulls commissions and other parameters from the Ranking contract.
 /// Important: Agree on the structure of the ranking parameters and this contract!
 /// Otherwise the calculations can be wrong!
-contract BranchOfPools is Initializable {
+contract BranchOfPools is Initializable, OwnableUpgradeable {
     using Address for address;
     using Strings for uint256;
 
@@ -29,9 +30,8 @@ contract BranchOfPools is Initializable {
         TokenDistribution,
         Emergency
     }
-    State public _state = State.Paused;
+    State public _state;
 
-    address public _owner;
     address private _root;
 
     uint256 public _stepValue;
@@ -69,35 +69,11 @@ contract BranchOfPools is Initializable {
 
     UnionWallet _unionWallet;
 
-    modifier onlyOwner() {
-        require(msg.sender == _owner, "Ownable: Only owner");
+    // choice = true | onlyState modifier
+    // choice = false | onlyNotState modifier
+    modifier stateCheck(State state, bool choice) {
+        require(choice ? _state == state : _state != state, "BOP: State error!");
         _;
-    }
-
-    function transferOwnership(address newOwner) public virtual onlyOwner {
-        require(
-            newOwner != address(0),
-            "Ownable: new owner is the zero address"
-        );
-        _owner = newOwner;
-    }
-
-    function stateSameOrAfter(State s) public view returns (bool) {
-        if (_state == s) return true;
-        if (_state == State.Emergency) return false;
-        if (s == State.Paused) return true;
-        if (s == State.Fundraising) return (_state == State.WaitingToken || _state == State.TokenDistribution);
-        if (s == State.WaitingToken) return (_state == State.TokenDistribution);
-        return false;  // No states after TokenDistributon.
-    }
-
-    function stateSameOrBefore(State s) public view returns (bool) {
-        if (_state == s) return true;
-        if (_state == State.Emergency) return false;
-        if (s == State.TokenDistribution) return true;
-        if (s == State.WaitingToken) return (_state == State.Fundraising || _state == State.Paused);
-        if (s == State.Fundraising) return (_state == State.Paused);
-        return false;  // No states before Paused.
     }
 
     /// @notice Assigns the necessary values to the variables
@@ -121,7 +97,7 @@ contract BranchOfPools is Initializable {
             "The devUSDAddress must not be zero."
         );
 
-        _owner = msg.sender;
+        _state = State.Paused;
         _root = Root;
         _usd = ERC20(tokenUSD);
         _decimals = 10**_usd.decimals();
@@ -130,10 +106,12 @@ contract BranchOfPools is Initializable {
         _devUSDAddress = devUSDAddress;
         _unlockTime = unlockTime;
 
+        __Ownable_init();
+
         _distributor = RewardDistributor(RootOfPools_v2(_root)._distributor());
         _unionWallet = UnionWallet(RootOfPools_v2(_root)._unionWallet());
 
-        _distributor.snapshot();
+        _distributor.createTeamSnapshot();
     }
 
     function getCommission() public {
@@ -178,18 +156,8 @@ contract BranchOfPools is Initializable {
         _stepValue = step;
     }
 
-    modifier onlyState(State state) {
-        require(_state == state, "STATE: It's impossible to do it now.");
-        _;
-    }
-
-    modifier onlyNotState(State state) {
-        require(_state != state, "STATE: It's impossible to do it now.");
-        _;
-    }
-
     /// @notice Opens fundraising
-    function startFundraising() external onlyOwner onlyState(State.Paused) {
+    function startFundraising() external onlyOwner stateCheck(State.Paused, true) {
         _state = State.Fundraising;
     }
 
@@ -197,8 +165,8 @@ contract BranchOfPools is Initializable {
     function stopEmergency()
         external
         onlyOwner
-        onlyNotState(State.Paused)
-        onlyNotState(State.TokenDistribution)
+        stateCheck(State.Paused, false)
+        stateCheck(State.TokenDistribution, false)
     {
         _state = State.Emergency;
     }
@@ -208,7 +176,7 @@ contract BranchOfPools is Initializable {
     /// but in this case we are forced not to use require because of the usdt token implementation,
     /// which does not return a result. And to keep flexibility in terms of using different ERC20,
     /// we have to do it :\
-    function paybackEmergency() external onlyState(State.Emergency) {
+    function paybackEmergency() external stateCheck(State.Emergency, true) {
         address user = _unionWallet.resolveIdentity(msg.sender);
         uint256 usdT = _usdEmergency[user];
         require(usdT > 0, "You have no funds to withdraw!");
@@ -220,7 +188,7 @@ contract BranchOfPools is Initializable {
     /// @dev The contract attempts to debit the user's funds in the specified amount in the token whose contract is located at _usd
     /// the amount must be approved for THIS address
     /// @param amount - The number of funds the user wants to deposit
-    function deposit(uint256 amount) external onlyState(State.Fundraising) {
+    function deposit(uint256 amount) external stateCheck(State.Fundraising, true) {
         address user = _unionWallet.resolveIdentity(msg.sender);
         uint256[] memory rank = Ranking(RootOfPools_v2(_root)._rankingAddress())
             .getParRankOfUser(user);
@@ -270,9 +238,9 @@ contract BranchOfPools is Initializable {
     function preSend(uint256 amount)
         external
         onlyOwner
-        onlyNotState(State.Paused)
-        onlyNotState(State.TokenDistribution)
-        onlyNotState(State.Emergency)
+        stateCheck(State.Paused, false)
+        stateCheck(State.TokenDistribution, false)
+        stateCheck(State.Emergency, false)
     {
         require(amount < _CURRENT_VALUE - _preSend);
 
@@ -291,9 +259,9 @@ contract BranchOfPools is Initializable {
     function stopFundraising()
         external
         onlyOwner
-        onlyNotState(State.Paused)
-        onlyNotState(State.TokenDistribution)
-        onlyNotState(State.Emergency)
+        stateCheck(State.Paused, false)
+        stateCheck(State.TokenDistribution, false)
+        stateCheck(State.Emergency, false)
     {
         require(
             _CURRENT_VALUE == _VALUE,
@@ -313,9 +281,9 @@ contract BranchOfPools is Initializable {
     function entrustToken(address tokenAddr)
         external
         onlyOwner
-        onlyNotState(State.Emergency)
-        onlyNotState(State.Fundraising)
-        onlyNotState(State.Paused)
+        stateCheck(State.Emergency, false)
+        stateCheck(State.Fundraising, false)
+        stateCheck(State.Paused, false)
     {
         require(
             tokenAddr != address(0),
@@ -328,13 +296,31 @@ contract BranchOfPools is Initializable {
     }
 
     /// @notice Allows users to brand the distributed tokens
-    function claim() external onlyState(State.TokenDistribution) {
+    function claim() external stateCheck(State.TokenDistribution, true) {
         address user = _unionWallet.resolveIdentity(msg.sender);
         uint256 amount = myCurrentAllocation(user);
         _issuedTokens[user] += amount;
         _DISTRIBUTED_TOKEN += amount;
         require(amount > 0, "CLAIM: You have no unredeemed tokens!");
         _token.transfer(msg.sender, amount);
+    }
+
+    function stateSameOrAfter(State s) public view returns (bool) {
+        if (_state == s) return true;
+        if (_state == State.Emergency) return false;
+        if (s == State.Paused) return true;
+        if (s == State.Fundraising) return (_state == State.WaitingToken || _state == State.TokenDistribution);
+        if (s == State.WaitingToken) return (_state == State.TokenDistribution);
+        return false;  // No states after TokenDistributon.
+    }
+
+    function stateSameOrBefore(State s) public view returns (bool) {
+        if (_state == s) return true;
+        if (_state == State.Emergency) return false;
+        if (s == State.TokenDistribution) return true;
+        if (s == State.WaitingToken) return (_state == State.Fundraising || _state == State.Paused);
+        if (s == State.Fundraising) return (_state == State.Paused);
+        return false;  // No states before Paused.
     }
 
     /// @notice Returns the amount of funds that the user deposited

@@ -77,11 +77,6 @@ contract RootOfPools_v2 is Initializable, OwnableUpgradeable {
         _unionWallet = newUnionWallet;
     }
 
-    /// @notice Returns the address of the usd token in which funds are collected
-    function getUSDAddress() external view returns (address) {
-        return _usdAddress;
-    }
-
     function addImage(address image) external onlyOwner {
         require(_imageTable[image] != true);
 
@@ -89,23 +84,6 @@ contract RootOfPools_v2 is Initializable, OwnableUpgradeable {
         _imageTable[image] = true;
 
         emit ImageAdded(image);
-    }
-
-    /// @notice Returns the linked branch contracts
-    function getPools() external view returns (Pool[] memory) {
-        return Pools;
-    }
-
-    function getPool(string calldata _name) external view returns (address) {
-        for (uint256 i = 0; i < Pools.length; i++) {
-            if (
-                keccak256(abi.encodePacked(Pools[i].name)) ==
-                keccak256(abi.encodePacked(_name))
-            ) {
-                return Pools[i].pool;
-            }
-        }
-        return address(0);
     }
 
     /// @notice Allows you to attach a new pool (branch contract)
@@ -171,6 +149,37 @@ contract RootOfPools_v2 is Initializable, OwnableUpgradeable {
     }
 
     //TODO
+    ///@dev To find out the list of pools from which a user can mine something,
+    ///     use the prepClaimAll function
+    function claimAll(address[] calldata pools) external {
+        for (uint256 i; i < pools.length; i++) {
+            claimAddress(pools[i]);
+        }
+    }
+
+    /// @notice Returns the address of the usd token in which funds are collected
+    function getUSDAddress() external view returns (address) {
+        return _usdAddress;
+    }
+
+    /// @notice Returns the linked branch contracts
+    function getPools() external view returns (Pool[] memory) {
+        return Pools;
+    }
+
+    function getPool(string calldata _name) external view returns (address) {
+        for (uint256 i = 0; i < Pools.length; i++) {
+            if (
+                keccak256(abi.encodePacked(Pools[i].name)) ==
+                keccak256(abi.encodePacked(_name))
+            ) {
+                return Pools[i].pool;
+            }
+        }
+        return address(0);
+    }
+
+    //TODO
     function prepClaimAll(address user)
         external
         view
@@ -184,15 +193,6 @@ contract RootOfPools_v2 is Initializable, OwnableUpgradeable {
         }
 
         return pools;
-    }
-
-    //TODO
-    ///@dev To find out the list of pools from which a user can mine something,
-    ///     use the prepClaimAll function
-    function claimAll(address[] calldata pools) external {
-        for (uint256 i; i < pools.length; i++) {
-            claimAddress(pools[i]);
-        }
     }
 
     function checkAllClaims(address user) external view returns (uint256) {
