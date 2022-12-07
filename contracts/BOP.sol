@@ -39,10 +39,19 @@ contract BranchOfPools is Initializable {
     uint256 private _decimals;
     uint256 public _preSend;
 
+    // _VALUE - is the amount of USD we are planning to collect.
+    // _CURRENT_VALUE - is the amount of USD we are ready to send right now.
+    //     _CURRENT_VALUE = sum(deposits) 
+    //                      - sum(commissions_for_owners_and_usd_team)
+    //                      + sum(commissions_for_token_team).
+    // _TOTAL_COMMISSIONS - is the total amount of money we need to subtract.
+    //     The trick here is that sum(commissions_for_owners_and_usd_team) +
+    //     sum(commissions_for_token_team) could be higher than the amount of
+    //     already collected comissions. We should not allow to close the pool
+    //     when we are in dept.
     uint256 public _CURRENT_VALUE;
     uint256 public _FUNDS_RAISED;
     uint256 public _DISTRIBUTED_TOKEN;
-    uint256 public _TOKEN_COMMISSION;
 
     mapping(address => uint256) public _valueUSDList;
 
@@ -133,7 +142,7 @@ contract BranchOfPools is Initializable {
         _distributor = RewardDistributor(RootOfPools_v2(_root)._distributor());
         _unionWallet = UnionWallet(RootOfPools_v2(_root)._unionWallet());
 
-        _distributor.snapshot();
+        _distributor.createTeamSnapshot();
     }
 
     function getCommission() public {
