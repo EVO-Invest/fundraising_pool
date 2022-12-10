@@ -12,6 +12,7 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "../contracts/ROP.sol";
 import "../contracts/RewardDistributor.sol";
 import "../contracts/UnionWallet.sol";
+import "./FundCoreLib.sol";
 
 /// @title The pool's subsidiary contract for fundraising.
 /// This contract collects funds, distributes them, and charges fees
@@ -22,6 +23,9 @@ import "../contracts/UnionWallet.sol";
 contract BranchOfPools is Initializable, OwnableUpgradeable {
     using Address for address;
     using Strings for uint256;
+    using FundCoreLib for FundCoreLib.FundMath;
+
+    FundCoreLib.FundMath math;
 
     enum State {
         Paused,
@@ -30,6 +34,7 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
         TokenDistribution,
         Emergency
     }
+    
     State public _state;
 
     address private _root;
@@ -110,10 +115,11 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
         _root = Root;
         _usd = ERC20(tokenUSD);
         _decimals = 10**_usd.decimals();
-        _VALUE = VALUE * _decimals;
         _stepValue = Step * _decimals;
         _devUSDAddress = devUSDAddress;
         _unlockTime = unlockTime;
+
+         math.changeFundraisingGoal(VALUE);
 
         __Ownable_init();
 
@@ -146,13 +152,12 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
     }
 
     /// @notice Changes the target amount of funds we collect
-    /// @param value - the new target amount of funds raised
-    function changeTargetValue(uint256 value)
-        external
+    /// @param newFundraisingTarget - the new target amount of funds raised
+    function changeFundraisingGoal(uint256 newFundraisingTarget) 
+        public
         onlyOwner
     {
-        require(stateSameOrBefore(State.Fundraising), "Too late to change value");
-        _VALUE = value;
+        math.changeFundraisingGoal(newFundraisingTarget);
     }
 
     /// @notice Changes the step with which we raise funds
