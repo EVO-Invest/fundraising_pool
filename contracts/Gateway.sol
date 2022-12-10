@@ -5,18 +5,18 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/cryptography/ECDSAUpgradeable.sol";
 
-import "./RewardDistributor.sol";
+import "./RewardCalcs.sol";
 
 // Gateway implements ERC712 protocol.
 contract Gateway is EIP712Upgradeable, OwnableUpgradeable {
-    RewardDistributor rewards;
+    RewardCalcs rewards;
 
     function initialize() public initializer {
         __EIP712_init("EVO Gateway", "1");
         __Ownable_init();
     }
 
-    function setRewards(RewardDistributor _rewards) public onlyOwner {
+    function setRewards(RewardCalcs _rewards) public onlyOwner {
         rewards = _rewards;
     }
 

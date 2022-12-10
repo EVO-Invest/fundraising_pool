@@ -83,12 +83,12 @@ describe("FundCore", () => {
             await this.fundCore.updateOutputTokenSalary(this.charlie.address, "0", "10000");
         });
 
-        const sendAsMuchAsPossible = async (comission) => {
+        const sendAsMuchAsPossible = async (commission) => {
             let amount = 1000000;
             let total = 0, totalFee = 0;
             while (amount >= 1) {
                 try {
-                    await this.fundCore.onDepositInputTokens(this.alice.address, Math.round(amount), Math.round(amount * comission));
+                    await this.fundCore.onDepositInputTokens(this.alice.address, Math.round(amount), Math.round(amount * commission));
                     total += Math.round(amount);
                     totalFee += Math.round(amount * 0.15);
                 }
@@ -122,7 +122,7 @@ describe("FundCore", () => {
             expect(effects4.events[0].args[0]).to.be.bignumber.equal("0");
         });
 
-        it("Case with 0 comissions", async () => {
+        it("Case with 0 commissions", async () => {
             const [totalPaid, totalFees] = await sendAsMuchAsPossible(0);
 
             // 1. Owner should pay salaries.
