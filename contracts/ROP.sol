@@ -35,7 +35,7 @@ contract RootOfPools_v2 is Initializable, OwnableUpgradeable {
 
     mapping(address => bool) private _imageTable;
 
-    address public _distributor;
+    address public _rewardCalcs;
     address public _unionWallet;
 
     event PoolCreated(string name, address pool);
@@ -69,8 +69,8 @@ contract RootOfPools_v2 is Initializable, OwnableUpgradeable {
         _rankingAddress = rankingAddress;
     }
 
-    function changeDistributor(address newDstr) public onlyOwner {
-        _distributor = newDstr;
+    function changeRewardCalcs(address newCalcs) public onlyOwner {
+        _rewardCalcs = newCalcs;
     }
 
     function changeUnionWallet(address newUnionWallet) public onlyOwner {

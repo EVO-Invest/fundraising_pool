@@ -9,9 +9,9 @@ import "@openzeppelin/contracts/utils/Address.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
-import "../contracts/ROP.sol";
-import "../contracts/RewardDistributor.sol";
-import "../contracts/UnionWallet.sol";
+import "./ROP.sol";
+import "./RewardCalcs.sol";
+import "./UnionWallet.sol";
 
 /// @title The pool's subsidiary contract for fundraising.
 /// This contract collects funds, distributes them, and charges fees
@@ -47,7 +47,7 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
     // _TOTAL_COMMISSIONS - is the total amount of money we need to subtract.
     //     The trick here is that sum(commissions_for_owners_and_usd_team) +
     //     sum(commissions_for_token_team) could be higher than the amount of
-    //     already collected comissions. We should not allow to close the pool
+    //     already collected commissions. We should not allow to close the pool
     //     when we are in dept.
     uint256 public _CURRENT_VALUE;
     uint256 public _FUNDS_RAISED;
@@ -56,7 +56,7 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
     mapping(address => uint256) public _valueUSDList;
 
     /* _usdEmergency stores the original amount of funds deposited,
-       no comissions, no nothing. So that in case of emergency,
+       no commissions, no nothing. So that in case of emergency,
        users can get exactly what they paid. */
     mapping(address => uint256) public _usdEmergency;
     mapping(address => uint256) public _issuedTokens;
@@ -72,7 +72,7 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
 
     uint256 public _unlockTime;
 
-    RewardDistributor _distributor;
+    RewardCalcs _rewardCalcs;
     mapping(address => uint256) _postCloseUsdDistribution;
     mapping(address => uint256) _postGotTokensUsdDistribution;
 
@@ -117,10 +117,10 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
 
         __Ownable_init();
 
-        _distributor = RewardDistributor(RootOfPools_v2(_root)._distributor());
+        _rewardCalcs = RewardCalcs(RootOfPools_v2(_root)._rewardCalcs());
         _unionWallet = UnionWallet(RootOfPools_v2(_root)._unionWallet());
 
-        _distributor.createTeamSnapshot();
+        _rewardCalcs.snapshotTeam();
     }
 
     function getCommission() public {
@@ -138,7 +138,7 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
                 _postGotTokensUsdDistribution[user] = 0;
             }
         }
-        require(amountToTransfer > 0, "No comissions to collect");
+        require(amountToTransfer > 0, "No commissions to collect");
         _usd.transfer(
             msg.sender, /* Important: getting amount from identity, but sending to msg.sender */
             amountToTransfer
@@ -211,29 +211,31 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
 
         uint256 commission = 0;
         uint256 heldUsd = 0;
-        (RewardDistributor.ComissionPlacement[] memory placements, address[] memory addresses, uint256[] memory amounts) =
-            _distributor.calculateComissions(user, amount);
+        /* TODO
+        (RewardCalcs.CommissionPlacement[] memory placements, address[] memory addresses, uint256[] memory amounts) =
+            _rewardCalcs.calculateCommissions(user, amount);
         for (uint256 rewardAcceptorIndex = 0; rewardAcceptorIndex < placements.length; ++rewardAcceptorIndex) {
             address rewardAddress = addresses[rewardAcceptorIndex];
             uint256 rewardAmount = amounts[rewardAcceptorIndex];
             commission += rewardAmount;
-            if (placements[rewardAcceptorIndex] == RewardDistributor.ComissionPlacement.STABLE_POST_FUND_CLOSE) {
+            if (placements[rewardAcceptorIndex] == RewardCalcs.CommissionPlacement.STABLE_POST_FUND_CLOSE) {
                 heldUsd += rewardAmount;
                 _postCloseUsdDistribution[rewardAddress] += rewardAmount;
-            } else if (placements[rewardAcceptorIndex] == RewardDistributor.ComissionPlacement.STABLE_POST_DISTRIBUTION) {
+            } else if (placements[rewardAcceptorIndex] == RewardCalcs.CommissionPlacement.STABLE_POST_DISTRIBUTION) {
                 heldUsd += rewardAmount;
                 _postGotTokensUsdDistribution[rewardAddress] += rewardAmount;
-            } else if (placements[rewardAcceptorIndex] == RewardDistributor.ComissionPlacement.TOKEN) {
-                /* commission here is not added, as the commission is showing how much money we are holding
+            } else if (placements[rewardAcceptorIndex] == RewardCalcs.CommissionPlacement.TOKEN) {
+                / * commission here is not added, as the commission is showing how much money we are holding
                    back, and not sending to the project. When distributor decided to distribute token
                    to someone, USD are still going to the fund. We are just saying that the reward acceptor
                    will get tokens equal to as he paid themselfes.
-                */
+                * /
                 _valueUSDList[rewardAddress] += rewardAmount;
             }
         }
         _CURRENT_VALUE += amount - heldUsd;
         require(_CURRENT_VALUE <= _VALUE, "DEPOSIT: Fundraising goal exceeded!");
+        */
 
         _usdEmergency[user] += amount;
         _valueUSDList[user] += amount - commission;
