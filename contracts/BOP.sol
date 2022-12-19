@@ -102,8 +102,6 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
         _unlockTime = unlockTime;
         _ownerAlreadyCollectedFunds = false;
 
-         math.changeFundraisingGoal(VALUE);
-
         __Ownable_init();
 
         _rewardCalcs = RewardCalcs(RootOfPools_v2(_root)._rewardCalcs());
@@ -158,7 +156,7 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
         onlyOwner
     {
         require(stateSameOrBefore(State.Fundraising), "Too late to change value");
-        _fundMath.changeFundraisingGoal(newFundraisingTarget * _decimals);
+        updateFundraisingTarget(newFundraisingTarget * _decimals);
     }
 
     /// @notice Changes the step with which we raise funds
