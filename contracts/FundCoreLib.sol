@@ -60,6 +60,9 @@ library FundCoreLib {
         require(requiredAmountToCloseFundraising(data) == 0, "Can't stop funraising");
     }
 
+    function myOutputTokens(FundMath storage data, address receiver, uint256 outputTokenSupply) internal view returns (uint256) {
+        return outputTokenSupply * data.participation[receiver] / data.fundraisingTarget - data.claimedOutputTokens[receiver];
+    }
     function claimOutputTokens(FundMath storage data, address receiver, uint256 outputTokenSupply) internal returns (uint256) {
         uint256 myShare = outputTokenSupply * data.participation[receiver] / data.fundraisingTarget - data.claimedOutputTokens[receiver];
         data.claimedOutputTokens[receiver] += myShare;
@@ -67,7 +70,7 @@ library FundCoreLib {
     }
 
     // update...Salary methods MUST be called before changeFundraisingGoal.
-    function changeFundraisingGoal(FundMath storage data, uint256 newFundraisingTarget) internal {
+    function changeFundraisingGoal(FundMath storage data, uint256 newFundraisingTarget) external {
         require(newFundraisingTarget >= data.allocationsGiven, "Can't shrink existing allocations");
         data.fundraisingTarget = newFundraisingTarget;
     }
@@ -84,5 +87,15 @@ library FundCoreLib {
         data.salaries[receiver] -= oldAmount;
         data.totalInputTokenSalaries += newAmount;
         data.totalInputTokenSalaries -= oldAmount;
+    }
+
+    function takeSalary(FundMath storage data, address receiver) external returns (uint256 salaryAmount) {
+        salaryAmount = data.salaries[receiver];
+        data.salaries[receiver] = 0;
+        data.totalInputTokenSalaries -= salaryAmount;
+    }
+
+    function getFundraisingTarget(FundMath storage data) external view returns (uint256) {
+        return data.fundraisingTarget;
     }
 }

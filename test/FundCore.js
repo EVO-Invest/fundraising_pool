@@ -6,7 +6,15 @@ chai.use(require('chai-bignumber')());
 
 describe("FundCore", () => {
     beforeEach(async () => {
-        const FundCoreLibImpl = await ethers.getContractFactory("FundCoreLibImpl");
+        const FundCoreLib = await ethers.getContractFactory("FundCoreLib");
+        const fundcorelib = await FundCoreLib.deploy();
+        await fundcorelib.deployed();
+
+        const FundCoreLibImpl = await ethers.getContractFactory("FundCoreLibImpl", {
+            libraries: {
+                FundCoreLib: fundcorelib.address,
+            }
+        });
         this.fundCore = await FundCoreLibImpl.deploy("1000000");
         const [admin, alice, bob, charlie] = await ethers.getSigners();
         this.admin = admin;

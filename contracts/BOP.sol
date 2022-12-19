@@ -12,6 +12,7 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "./ROP.sol";
 import "./RewardCalcs.sol";
 import "./UnionWallet.sol";
+import "./FundCoreLib.sol";
 
 /// @title The pool's subsidiary contract for fundraising.
 /// This contract collects funds, distributes them, and charges fees
@@ -23,8 +24,6 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
     using Address for address;
     using Strings for uint256;
     using FundCoreLib for FundCoreLib.FundMath;
-
-    FundCoreLib.FundMath math;
 
     enum State {
         Paused,
@@ -39,47 +38,31 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
     address private _root;
 
     uint256 public _stepValue;
-    uint256 public _VALUE;
     uint256 private _decimals;
+
+    // Amount of USD we send in a test transaction.
     uint256 public _preSend;
 
-    // _VALUE - is the amount of USD we are planning to collect.
-    // _CURRENT_VALUE - is the amount of USD we are ready to send right now.
-    //     _CURRENT_VALUE = sum(deposits) 
-    //                      - sum(commissions_for_owners_and_usd_team)
-    //                      + sum(commissions_for_token_team).
-    // _TOTAL_COMMISSIONS - is the total amount of money we need to subtract.
-    //     The trick here is that sum(commissions_for_owners_and_usd_team) +
-    //     sum(commissions_for_token_team) could be higher than the amount of
-    //     already collected commissions. We should not allow to close the pool
-    //     when we are in dept.
-    uint256 public _CURRENT_VALUE;
-    uint256 public _FUNDS_RAISED;
+    // Total amount of token we already distributed.
+    // So that token.balanceOf(this) + _DISTRIBUTED_TOKEN = amount of received token.
     uint256 public _DISTRIBUTED_TOKEN;
-
-    mapping(address => uint256) public _valueUSDList;
+    bool _ownerAlreadyCollectedFunds;
 
     /* _usdEmergency stores the original amount of funds deposited,
        no commissions, no nothing. So that in case of emergency,
        users can get exactly what they paid. */
     mapping(address => uint256) public _usdEmergency;
-    mapping(address => uint256) public _issuedTokens;
+
+    uint256 _teamSnapshotId;
 
     ERC20 public _usd;
     ERC20 public _token;
     address public _devUSDAddress;
-
-    struct Member {
-        address awardsAddress;
-        uint256 amount;
-    }
-
     uint256 public _unlockTime;
+    uint256 _defaultCommission;
 
+    FundCoreLib.FundMath _fundMath;
     RewardCalcs _rewardCalcs;
-    mapping(address => uint256) _postCloseUsdDistribution;
-    mapping(address => uint256) _postGotTokensUsdDistribution;
-
     UnionWallet _unionWallet;
 
     // choice = true | onlyState modifier
@@ -117,6 +100,7 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
         _stepValue = Step * _decimals;
         _devUSDAddress = devUSDAddress;
         _unlockTime = unlockTime;
+        _ownerAlreadyCollectedFunds = false;
 
          math.changeFundraisingGoal(VALUE);
 
@@ -125,29 +109,46 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
         _rewardCalcs = RewardCalcs(RootOfPools_v2(_root)._rewardCalcs());
         _unionWallet = UnionWallet(RootOfPools_v2(_root)._unionWallet());
 
-        _rewardCalcs.snapshotTeam();
+        _teamSnapshotId = _rewardCalcs.snapshotTeam();
+        updateFundraisingTarget(VALUE * _decimals);
+
+        _defaultCommission = Ranking(RootOfPools_v2(_root)._rankingAddress())
+            .getParRankOfUser(address(0x0))[2];
+    }
+
+    function updateFundraisingTarget(uint256 fundraisingTarget) internal {
+        uint256 previousTarget = _fundMath.getFundraisingTarget();
+        for (uint256 i = 0; i < _rewardCalcs.allTeamLength(); ++i) {
+            address memberAddress = _rewardCalcs.allTeamAt(i);
+            (uint16 commission, RewardCalcs.TeamMemberRewardTypeChoice choice) = _rewardCalcs.teamMemberRewardInfoAt(memberAddress, _teamSnapshotId);
+            uint256 prevSalaryExpectation = previousTarget * commission / _rewardCalcs._denominator();
+            uint256 newSalaryExpectation = fundraisingTarget * commission / _rewardCalcs._denominator();
+            if (choice == RewardCalcs.TeamMemberRewardTypeChoice.TOKEN) {
+                _fundMath.updateOutputTokenSalary(memberAddress, prevSalaryExpectation, newSalaryExpectation);
+            } else {
+                _fundMath.updateInputTokenSalary(memberAddress, prevSalaryExpectation, newSalaryExpectation);
+            }
+        }
+        _fundMath.changeFundraisingGoal(fundraisingTarget);
     }
 
     function getCommission() public {
-        address user = _unionWallet.resolveIdentity(msg.sender);
-        uint256 amountToTransfer = 0;
-        if (stateSameOrAfter(State.WaitingToken)) {
-            if (_postCloseUsdDistribution[user] > 0) {
-                amountToTransfer += _postCloseUsdDistribution[user];
-                _postCloseUsdDistribution[user] = 0;
-            }
+        if (stateSameOrAfter(State.WaitingToken) && _ownerAlreadyCollectedFunds) {
+            _ownerAlreadyCollectedFunds = false;
+            _usd.transfer(
+                owner(),
+                _fundMath.ownersShare()
+            );
         }
+
         if (stateSameOrAfter(State.TokenDistribution) || (block.timestamp >= _unlockTime)) {
-            if (_postGotTokensUsdDistribution[user] > 0) {
-                amountToTransfer += _postGotTokensUsdDistribution[user];
-                _postGotTokensUsdDistribution[user] = 0;
-            }
+            address user = _unionWallet.resolveIdentity(tx.origin);
+            // Ref. payments are also treates as salary by our depositing code.
+            _usd.transfer(
+                tx.origin,
+                _fundMath.takeSalary(user)
+            );
         }
-        require(amountToTransfer > 0, "No commissions to collect");
-        _usd.transfer(
-            msg.sender, /* Important: getting amount from identity, but sending to msg.sender */
-            amountToTransfer
-        );
     }
 
     /// @notice Changes the target amount of funds we collect
@@ -156,7 +157,8 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
         public
         onlyOwner
     {
-        math.changeFundraisingGoal(newFundraisingTarget);
+        require(stateSameOrBefore(State.Fundraising), "Too late to change value");
+        _fundMath.changeFundraisingGoal(newFundraisingTarget * _decimals);
     }
 
     /// @notice Changes the step with which we raise funds
@@ -190,11 +192,11 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
     /// which does not return a result. And to keep flexibility in terms of using different ERC20,
     /// we have to do it :\
     function paybackEmergency() external stateCheck(State.Emergency, true) {
-        address user = _unionWallet.resolveIdentity(msg.sender);
+        address user = _unionWallet.resolveIdentity(tx.origin);
         uint256 usdT = _usdEmergency[user];
         require(usdT > 0, "You have no funds to withdraw!");
         _usdEmergency[user] = 0;
-        _usd.transfer(msg.sender, usdT);
+        _usd.transfer(tx.origin, usdT);
     }
 
     /// @notice The function of the deposit of funds.
@@ -202,69 +204,32 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
     /// the amount must be approved for THIS address
     /// @param amount - The number of funds the user wants to deposit
     function deposit(uint256 amount) external stateCheck(State.Fundraising, true) {
-        address user = _unionWallet.resolveIdentity(msg.sender);
+        _usd.transferFrom(tx.origin, address(this), amount);
+        address user = _unionWallet.resolveIdentity(tx.origin);
+        _usdEmergency[user] += amount;
+
         uint256[] memory rank = Ranking(RootOfPools_v2(_root)._rankingAddress())
             .getParRankOfUser(user);
-        uint256 Min = _decimals * rank[0];
-        uint256 Max = _decimals * rank[1];
 
-        require(amount >= Min && 
-                amount + _valueUSDList[user] <= Max &&
+        require(amount >= /* Min=*/ _decimals * rank[0] && 
+                amount + _usdEmergency[user] <= /* Max=*/ _decimals * rank[1] &&
                 amount % _stepValue == 0,
                 "DEPOSIT: Wrong funding!");
 
-        uint256 commission = 0;
-        uint256 heldUsd = 0;
-        /* TODO
-        (RewardCalcs.CommissionPlacement[] memory placements, address[] memory addresses, uint256[] memory amounts) =
-            _rewardCalcs.calculateCommissions(user, amount);
-        for (uint256 rewardAcceptorIndex = 0; rewardAcceptorIndex < placements.length; ++rewardAcceptorIndex) {
-            address rewardAddress = addresses[rewardAcceptorIndex];
-            uint256 rewardAmount = amounts[rewardAcceptorIndex];
-            commission += rewardAmount;
-            if (placements[rewardAcceptorIndex] == RewardCalcs.CommissionPlacement.STABLE_POST_FUND_CLOSE) {
-                heldUsd += rewardAmount;
-                _postCloseUsdDistribution[rewardAddress] += rewardAmount;
-            } else if (placements[rewardAcceptorIndex] == RewardCalcs.CommissionPlacement.STABLE_POST_DISTRIBUTION) {
-                heldUsd += rewardAmount;
-                _postGotTokensUsdDistribution[rewardAddress] += rewardAmount;
-            } else if (placements[rewardAcceptorIndex] == RewardCalcs.CommissionPlacement.TOKEN) {
-                / * commission here is not added, as the commission is showing how much money we are holding
-                   back, and not sending to the project. When distributor decided to distribute token
-                   to someone, USD are still going to the fund. We are just saying that the reward acceptor
-                   will get tokens equal to as he paid themselfes.
-                * /
-                _valueUSDList[rewardAddress] += rewardAmount;
-            }
-        }
-        _CURRENT_VALUE += amount - heldUsd;
-        require(_CURRENT_VALUE <= _VALUE, "DEPOSIT: Fundraising goal exceeded!");
-        */
-
-        _usdEmergency[user] += amount;
-        _valueUSDList[user] += amount - commission;
-
-        if (_CURRENT_VALUE == _VALUE) {
-            _state = State.WaitingToken;
-        }
+        uint256 totalCommissions = amount * /* CommissionPrc=*/ rank[2] / 100;
+        _fundMath.onDepositInputTokens(user, amount - totalCommissions, totalCommissions);
+        (uint256 referralCommission, address referral) = _rewardCalcs.calculateReferralsCommission(user, amount, totalCommissions, amount * _defaultCommission / 100);
+        _fundMath.updateInputTokenSalary(referral, 0, referralCommission);
     }
 
     function preSend(uint256 amount)
         external
         onlyOwner
         stateCheck(State.Paused, false)
-        stateCheck(State.TokenDistribution, false)
         stateCheck(State.Emergency, false)
     {
-        require(amount < _CURRENT_VALUE - _preSend);
-
-        if (_state == State.WaitingToken) {
-            uint256 balance = _usd.balanceOf(address(this));
-            require(balance == _CURRENT_VALUE - _preSend);
-        }
-
+        require(amount + _preSend <= _fundMath.getFundraisingTarget());
         _preSend += amount;
-
         _usd.transfer(_devUSDAddress, amount);
     }
 
@@ -277,16 +242,12 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
         stateCheck(State.TokenDistribution, false)
         stateCheck(State.Emergency, false)
     {
-        require(
-            _CURRENT_VALUE == _VALUE,
-            "COLLECT: The funds have already been withdrawn."
-        );
+        _fundMath.closeFundraising(0, owner());
+        _state = State.WaitingToken;
+    }
 
-        _FUNDS_RAISED = _CURRENT_VALUE;
-        _CURRENT_VALUE = 0;
-
-        //Send to devs
-        _usd.transfer(_devUSDAddress, _FUNDS_RAISED - _preSend);
+    function requiredAmountToCloseFundraising() external view stateCheck(State.Fundraising, true) returns (uint256) {
+        return _fundMath.requiredAmountToCloseFundraising();
     }
 
     /// @notice Allows developers to transfer tokens for distribution to contributors
@@ -305,17 +266,15 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
         );
 
         _token = ERC20(tokenAddr);
-
         _state = State.TokenDistribution;
     }
 
     /// @notice Allows users to brand the distributed tokens
     function claim() external stateCheck(State.TokenDistribution, true) {
         address user = _unionWallet.resolveIdentity(msg.sender);
-        uint256 amount = myCurrentAllocation(user);
-        _issuedTokens[user] += amount;
-        _DISTRIBUTED_TOKEN += amount;
+        uint256 amount = _fundMath.claimOutputTokens(user, _DISTRIBUTED_TOKEN + _token.balanceOf(address(this)));
         require(amount > 0, "CLAIM: You have no unredeemed tokens!");
+        _DISTRIBUTED_TOKEN += amount;
         _token.transfer(msg.sender, amount);
     }
 
@@ -350,18 +309,9 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
     /// @notice Returns the number of tokens the user can take at the moment
     /// @param user - address user
     function myCurrentAllocation(address user) public view returns (uint256) {
-        if (_FUNDS_RAISED == 0) {
+        if (_state != State.TokenDistribution)
             return 0;
-        }
-
-        user = _unionWallet.resolveIdentity(user);
-        uint256 currentTokenBalance = _token.balanceOf(address(this));
-        uint256 amount = (
-            ((_valueUSDList[user] *
-                (currentTokenBalance + _DISTRIBUTED_TOKEN)) / _FUNDS_RAISED)
-        ) - _issuedTokens[user];
-
-        return amount;
+        return _fundMath.myOutputTokens(user, _DISTRIBUTED_TOKEN + _token.balanceOf(address(this)));
     }
 
     /// @notice Auxiliary function for RootOfPools claimAll

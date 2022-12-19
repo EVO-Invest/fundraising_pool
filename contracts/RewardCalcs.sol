@@ -48,7 +48,7 @@ contract RewardCalcs is Initializable, OwnableUpgradeable {
     UnionWallet _unionwallet;
 
     uint16 _defaultReferralCommission;
-    uint16 _denominator;
+    uint16 public _denominator;
     mapping(address => ReferralCommissionInfo) _refInfos;
     mapping(address => TeamRewards) _teamRewards;
     mapping(address => TeamRewardsSnapshots) _teamRewardsSnapshots;
@@ -101,9 +101,11 @@ contract RewardCalcs is Initializable, OwnableUpgradeable {
     // Making the defaultCommission as a parameter in order to keep all deals with
     // our Ranking system external.
     function calculateReferralsCommission(address depositor, uint256 depositAmount, uint256 commission, uint256 defaultCommission) public view
-            returns (uint256 referralCommission) {
+            returns (uint256, address) {
         address referrer = _refInfos[depositor].referrer;
-        if (referrer == address(0x0)) return 0;
+        if (referrer == address(0x0)) {
+            return (0, referrer);
+        }
         uint16 commissionOverride = _refInfos[referrer].commissionOverride;
         bool isNormalReferrer = (commissionOverride == 0) || (commissionOverride == _defaultReferralCommission);
 
@@ -128,7 +130,7 @@ contract RewardCalcs is Initializable, OwnableUpgradeable {
             }
         }
 
-        return referrerCommission;
+        return (referrerCommission, referrer);
     }
 
     function setReferral(address user, address referral) public {
