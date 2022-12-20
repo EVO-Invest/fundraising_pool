@@ -71,9 +71,6 @@ describe("Basic tests", function () {
 
         // deploy bop
 
-        const FundCoreLib = await ethers.getContractFactory("FundCoreLib");
-        const fundcorelib = await FundCoreLib.deploy();
-
         const BOP = await ethers.getContractFactory("BranchOfPools");
         bop = await upgrades.deployProxy(BOP, [
             rop.address,

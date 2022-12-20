@@ -1,12 +1,9 @@
 //SPDX-License-Identifier: GNU GPLv3
 pragma solidity ^0.8.2;
 
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/utils/Strings.sol";
-import "@openzeppelin/contracts/utils/math/SafeMath.sol";
-
+import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/StringsUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/AddressUpgradeable.sol";
-
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
@@ -23,7 +20,7 @@ import "./FundCoreLib.sol";
 /// Otherwise the calculations can be wrong!
 contract BranchOfPools is Initializable, OwnableUpgradeable {
     using AddressUpgradeable for address;
-    using Strings for uint256;
+    using StringsUpgradeable for uint256;
     using FundCoreLib for FundCoreLib.FundMath;
 
     enum State {
@@ -56,8 +53,8 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
 
     uint256 _teamSnapshotId;
 
-    ERC20 public _usd;
-    ERC20 public _token;
+    ERC20Upgradeable public _usd;
+    ERC20Upgradeable public _token;
     address public _devUSDAddress;
     uint256 public _unlockTime;
     uint256 _defaultCommission;
@@ -96,7 +93,7 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
 
         _state = State.Paused;
         _root = Root;
-        _usd = ERC20(tokenUSD);
+        _usd = ERC20Upgradeable(tokenUSD);
         _decimals = 10**_usd.decimals();
         _stepValue = Step * _decimals;
         _devUSDAddress = devUSDAddress;
@@ -188,7 +185,7 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
     /// @notice Returns the deposited funds to the caller
     /// @dev This is a bad way to write a transaction check,
     /// but in this case we are forced not to use require because of the usdt token implementation,
-    /// which does not return a result. And to keep flexibility in terms of using different ERC20,
+    /// which does not return a result. And to keep flexibility in terms of using different ERC20Upgradeable,
     /// we have to do it :\
     function paybackEmergency() external stateCheck(State.Emergency, true) {
         address user = _unionWallet.resolveIdentity(tx.origin);
@@ -264,7 +261,7 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
             "ENTRUST: The tokenAddr must not be zero."
         );
 
-        _token = ERC20(tokenAddr);
+        _token = ERC20Upgradeable(tokenAddr);
         _state = State.TokenDistribution;
     }
 
