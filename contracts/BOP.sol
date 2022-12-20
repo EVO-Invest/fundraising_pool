@@ -4,7 +4,8 @@ pragma solidity ^0.8.2;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
-import "@openzeppelin/contracts/utils/Address.sol";
+
+import "@openzeppelin/contracts-upgradeable/utils/AddressUpgradeable.sol";
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
@@ -21,7 +22,7 @@ import "./FundCoreLib.sol";
 /// Important: Agree on the structure of the ranking parameters and this contract!
 /// Otherwise the calculations can be wrong!
 contract BranchOfPools is Initializable, OwnableUpgradeable {
-    using Address for address;
+    using AddressUpgradeable for address;
     using Strings for uint256;
     using FundCoreLib for FundCoreLib.FundMath;
 

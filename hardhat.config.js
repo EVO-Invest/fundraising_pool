@@ -2,6 +2,7 @@ require("@nomiclabs/hardhat-waffle");
 require("@nomiclabs/hardhat-ethers");
 require("@openzeppelin/hardhat-upgrades");
 require("@nomiclabs/hardhat-etherscan");
+require('hardhat-contract-sizer');
 const { PK, TBSC_API_KEY } = require("./env.json");
 
 module.exports = {
@@ -17,6 +18,12 @@ module.exports = {
         version: "0.4.16",
       },
     ],
+    settings: {
+      optimizer: {
+        runs: 5,
+        enabled: true
+      }
+    }
   },
   networks: {
     testbsc: {

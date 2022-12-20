@@ -70,7 +70,7 @@ library FundCoreLib {
     }
 
     // update...Salary methods MUST be called before changeFundraisingGoal.
-    function changeFundraisingGoal(FundMath storage data, uint256 newFundraisingTarget) external {
+    function changeFundraisingGoal(FundMath storage data, uint256 newFundraisingTarget) internal {
         require(newFundraisingTarget >= data.allocationsGiven, "Can't shrink existing allocations");
         data.fundraisingTarget = newFundraisingTarget;
     }
@@ -89,13 +89,13 @@ library FundCoreLib {
         data.totalInputTokenSalaries -= oldAmount;
     }
 
-    function takeSalary(FundMath storage data, address receiver) external returns (uint256 salaryAmount) {
+    function takeSalary(FundMath storage data, address receiver) internal returns (uint256 salaryAmount) {
         salaryAmount = data.salaries[receiver];
         data.salaries[receiver] = 0;
         data.totalInputTokenSalaries -= salaryAmount;
     }
 
-    function getFundraisingTarget(FundMath storage data) external view returns (uint256) {
+    function getFundraisingTarget(FundMath storage data) internal view returns (uint256) {
         return data.fundraisingTarget;
     }
 }
