@@ -153,7 +153,7 @@ describe("BOP Megatest", function () {
     }
 
     const generateWalletsAndFundThem = async () => {
-        for (let investorID = 0; investorID < 1000; ++investorID) {
+        for (let investorID = 0; investorID < 500; ++investorID) {
             if (investorID % 100 == 0) console.log(`Generated ${investors.length} investors`);
             const newInvestor = new Investor();
             const mainWallet = ethers.Wallet.createRandom().connect(admin.provider)
@@ -246,7 +246,28 @@ describe("BOP Megatest", function () {
 
             if (parseInt(remainingUSD.toString()) < 100) {
                 console.log(`OK, closing fundraising, as only ${remainingUSD.toString()} remained`)
+                break
             }
         }
     })
+
+    it("Closes fund", async () => {})
+
+    it("Allows to owner to collect comissions", async () => {})
+
+    it("Sets token address", async () => {})
+
+    it("Sends payments to project", async () => {})
+
+    it("Receives some token", async () => {})
+    
+    it("Check claims")
+
+    it("Check salary claims")    
+    
+    it("Receives more token", async () => {})
+
+    it("Check claims")
+
+    it("Check salary claims")    
 });
