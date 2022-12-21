@@ -129,8 +129,8 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
     }
 
     function getCommission() public {
-        if (stateSameOrAfter(State.WaitingToken) && _ownerAlreadyCollectedFunds) {
-            _ownerAlreadyCollectedFunds = false;
+        if (stateSameOrAfter(State.WaitingToken) && !_ownerAlreadyCollectedFunds) {
+            _ownerAlreadyCollectedFunds = true;
             _usd.transfer(
                 _root.owner(),
                 _fundMath.ownersShare()

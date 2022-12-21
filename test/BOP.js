@@ -7,6 +7,7 @@ const { mine } = require("@nomicfoundation/hardhat-network-helpers");
 class Investor {
     constructor() {
         this.wallets = [];
+        this.amountInvested = 0;
     }
 
     addWallet(wallet) {
@@ -16,8 +17,9 @@ class Investor {
 
 
 describe("BOP Megatest", function () {
-    let rop, ranks, usdt, unionwallet, rewardCalcs, bopImage;
+    let rop, ranks, usdt, unionwallet, rewardCalcs, bopImage, token;
     let admin, dev;
+    let getDirectPoolAccess;
 
     let investors = []
     let team = []
@@ -61,17 +63,23 @@ describe("BOP Megatest", function () {
       
         await ranks.giveRanks([admin.address], "Admin");
 
-         // deploy usdt
-         const USDT = await ethers.getContractFactory("BEP20Token");
-         usdt = await USDT.deploy(6);
+        // deploy usdt
+
+        const USDT = await ethers.getContractFactory("BEP20Token");
+        usdt = await USDT.deploy(6);
+
+        // deploy token
+
+        const TOKEN = USDT;  // shortcut
+        token = await TOKEN.deploy(9);
 
         // deploy unionwallet
         
         const UnionWallet = await ethers.getContractFactory("UnionWallet");
         unionwallet = await upgrades.deployProxy(UnionWallet);
          
-         // deploy rop
-         
+        // deploy rop
+
         const ROP = await ethers.getContractFactory("RootOfPools_v2");
         rop = await upgrades.deployProxy(ROP, [usdt.address, ranks.address], {
              initializer: "initialize",
@@ -118,12 +126,17 @@ describe("BOP Megatest", function () {
                 100,
                 dev.address,
                 usdt.address,
-                100000
+                2524608000 /* somewhat 2050/1/1 */
             )).data);
         const createBopEffects = await createBopTx.wait()
         const responseLogs = createBopEffects.events.filter(e => e.event === "Response");
         expect(responseLogs).to.have.length(1)
         expect(responseLogs[0].args.success).to.be.true
+
+        getDirectPoolAccess = async () => {
+            const poolAddress = (await rop.Pools(0)).pool
+            return BOP.attach(poolAddress)
+        }
     });
 
     const setSalaries = async () => {
@@ -242,27 +255,185 @@ describe("BOP Megatest", function () {
 
             console.log(`${i}. Depositing ${payment} from ${wallet.address}. Total deposited ${totalPayments}. Remaining ${remainingUSD.toString()}`);
 
+            /* Not nice to hardcode it here, but it is easier... */
+            const ranker = i % 17;
+            if (ranker <= 13) {
+                investors[i].totalPayments += 0.8 * payment;
+            } else if (ranker < 16) {
+                investors[i].totalPayments += 0.9 * payment;
+            } else if (ranker === 16) {
+                investors[i].totalPayments += payment;
+            }
+
             if (totalPayments >= 119500) {
                 console.log(`OK, closing fundraising.`)
                 break
             }
-            if (parseInt(remainingUSD.toString()) < 100) {
-                console.log(`OK, closing fundraising, as only ${remainingUSD.toString()} remained`)
-                break
-            }
+            // if (parseInt(remainingUSD.toString()) < 100) {
+            //     console.log(`OK, closing fundraising, as only ${remainingUSD.toString()} remained`)
+            //     break
+            // }
         }
     })
 
-    it("Closes fund", async () => {})
+    it("Allows to send 1% of collected USD to the project during the fundraising", async () => {
+        const presendTxRaw = await bopImage.populateTransaction.preSend("1000" + "000000")
+        const presendTx = await rop.Calling("First Pool", presendTxRaw.data);
+        const effects = await presendTx.wait()
+        const responseLogs = effects.events.filter(e => e.event === "Response");
+        expect(responseLogs).to.have.length(1)
+        expect(responseLogs[0].args.success).to.be.true
 
-    it("Allows to owner to collect comissions", async () => {})
+        const devBalance = await usdt.balanceOf(dev.address);
+        expect(devBalance.div("1000000").toString()).to.be.eq("1000")
+    })
 
-    it("Sets token address", async () => {})
+    it("Closes fund", async () => {
+        const stopFundraisingTxRaw = await bopImage.populateTransaction.stopFundraising()
+        const stopFundraisingTx = await rop.Calling("First Pool", stopFundraisingTxRaw.data);
+        const effects = await stopFundraisingTx.wait()
+        const responseLogs = effects.events.filter(e => e.event === "Response");
+        expect(responseLogs).to.have.length(1)
+        expect(responseLogs[0].args.success).to.be.true
+    })
 
-    it("Sends payments to project", async () => {})
+    it("Allows to send 1% of collected USD to the project before token announced", async () => {
+        const presendTxRaw = await bopImage.populateTransaction.preSend("1000" + "000000")
+        const presendTx = await rop.Calling("First Pool", presendTxRaw.data);
+        const effects = await presendTx.wait()
+        const responseLogs = effects.events.filter(e => e.event === "Response");
+        expect(responseLogs).to.have.length(1)
+        expect(responseLogs[0].args.success).to.be.true
 
-    it("Receives some token", async () => {})
-    
+        const devBalance = await usdt.balanceOf(dev.address);
+        expect(devBalance.div("1000000").toString()).to.be.eq("2000")
+    })
+
+    it("Allows to owner to collect comissions", async () => {
+        const adminBalanceBeforeCollectingComissions = await usdt.balanceOf(admin.address)
+
+        const collectComissionsTxRaw = await bopImage.populateTransaction.getCommission()
+        const collectComissionsTx = await rop.Calling("First Pool", collectComissionsTxRaw.data);
+        const effects = await collectComissionsTx.wait()
+        const responseLogs = effects.events.filter(e => e.event === "Response");
+        expect(responseLogs).to.have.length(1)
+        expect(responseLogs[0].args.success).to.be.true
+
+        const adminBalanceAfterCollectingComissions = await usdt.balanceOf(admin.address)
+
+        expect(adminBalanceAfterCollectingComissions
+                .sub(adminBalanceBeforeCollectingComissions)
+                .div("1000000").toString()).to.be.eq("5841");
+    })
+
+    it("Does not allow to team to collect comissions", async () => {
+        const crewBalanceBeforeCollectingComissions = await usdt.balanceOf(team[1].address)
+        const pool = await getDirectPoolAccess()
+
+        const collectComissionsTx = await pool.connect(team[1]).getCommission()
+        await collectComissionsTx.wait()
+
+        const crewBalanceAfterCollectingComissions = await usdt.balanceOf(team[1].address)
+
+        expect(crewBalanceAfterCollectingComissions
+                .sub(crewBalanceBeforeCollectingComissions).toString()).to.be.eq("0")
+    })
+
+    it("Does not allow to referrals to collect comissions", async () => {
+        const referralBalanceBeforeCollectingComissions = await usdt.balanceOf(investors[1].wallets[0].address)
+        const pool = await getDirectPoolAccess()
+
+        const collectComissionsTx = await pool.connect(investors[1].wallets[0]).getCommission()
+        await collectComissionsTx.wait()
+
+        const referralBalanceAfterCollectingComissions = await usdt.balanceOf(investors[1].wallets[0].address)
+
+        expect(referralBalanceAfterCollectingComissions
+                .sub(referralBalanceBeforeCollectingComissions).toString()).to.be.eq("0")
+    })
+
+    it("Sets token address", async () => {
+        const entrustTxRaw = await bopImage.populateTransaction.entrustToken(token.address)
+        const entrustTx = await rop.Calling("First Pool", entrustTxRaw.data);
+        const effects = await entrustTx.wait()
+        const responseLogs = effects.events.filter(e => e.event === "Response");
+        expect(responseLogs).to.have.length(1)
+        expect(responseLogs[0].args.success).to.be.true
+    })
+
+    it("Allows to send remaning collected USD to the project", async () => {
+        const presendTxRaw = await bopImage.populateTransaction.preSend("98000" + "000000")
+        const presendTx = await rop.Calling("First Pool", presendTxRaw.data);
+        const effects = await presendTx.wait()
+        const responseLogs = effects.events.filter(e => e.event === "Response");
+        expect(responseLogs).to.have.length(1)
+        expect(responseLogs[0].args.success).to.be.true
+
+        const devBalance = await usdt.balanceOf(dev.address);
+        expect(devBalance.div("1000000").toString()).to.be.eq("100000")
+    })
+
+    it("Allows to some referrals to collect comissions (others will collect later)", async () => {
+        const pool = await getDirectPoolAccess()
+        for (let i = 0; i < 10; ++i) {
+            const wallet = investors[i].wallets[investors[i].wallets.length - 1];
+            const referralBalanceBeforeCollectingComissions = await usdt.balanceOf(wallet.address)
+
+            const collectComissionsTx = await pool.connect(wallet).getCommission()
+            await collectComissionsTx.wait()
+
+            const referralBalanceAfterCollectingComissions = await usdt.balanceOf(wallet.address)
+
+            console.log(
+                `Referal ${i} got ${referralBalanceAfterCollectingComissions.sub(referralBalanceBeforeCollectingComissions).div("1000000")} in comissions`
+            );
+        }
+    })
+
+    it("Allows to the person in salary in stable to receive salary", async () => {
+        const crewBalanceBeforeCollectingComissions = await usdt.balanceOf(team[1].address)
+        const pool = await getDirectPoolAccess()
+
+        const collectComissionsTx = await pool.connect(team[1]).getCommission()
+        await collectComissionsTx.wait()
+
+        const crewBalanceAfterCollectingComissions = await usdt.balanceOf(team[1].address)
+
+        expect(crewBalanceAfterCollectingComissions
+                .sub(crewBalanceBeforeCollectingComissions)
+                .div("1000000").toString()).to.be.eq("500")
+    })
+
+    it("Receives some token", async () => {
+        const pool = await getDirectPoolAccess();
+        // So, we got 10M tokens for 100K.
+        const tx = await token.transfer(pool.address, "10000000" + "000000000");
+        await tx.wait()
+    })
+
+    it("Allows to remaining referrals to collect comissions", async () => {
+        const pool = await getDirectPoolAccess()
+        for (let i = 10; i < 30; ++i) {
+            const wallet = investors[i].wallets[investors[i].wallets.length - 1];
+            const referralBalanceBeforeCollectingComissions = await usdt.balanceOf(wallet.address)
+
+            const collectComissionsTx = await pool.connect(wallet).getCommission()
+            await collectComissionsTx.wait()
+
+            const referralBalanceAfterCollectingComissions = await usdt.balanceOf(wallet.address)
+
+            console.log(
+                `Referal ${i} got ${referralBalanceAfterCollectingComissions.sub(referralBalanceBeforeCollectingComissions).div("1000000")} in comissions`
+            );
+        }
+    })
+
+    it("After sending payments and collecting comissions, remaining balance should be almost 0", async () => {
+        const pool = await getDirectPoolAccess();
+        const bopContractBalance = await usdt.balanceOf(pool.address)
+        expect(bopContractBalance.div("1000000").toString()).to.be.eq("0")
+    })
+
     it("Check claims")
 
     it("Check salary claims")    
