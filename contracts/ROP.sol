@@ -7,8 +7,9 @@ import "@openzeppelin/contracts-upgradeable/utils/AddressUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts/proxy/Clones.sol";
 
-import "../contracts/Ranking.sol";
-import "../contracts/BOP.sol";
+import "./Ranking.sol";
+import "./BOP.sol";
+import "./RewardCalcs.sol";
 
 /// @title The root of the poole tree. Allows you to close control of a large
 /// number of pools to 1 address. Simplifies user interaction with a large number of pools.
@@ -35,7 +36,7 @@ contract RootOfPools_v2 is Initializable, OwnableUpgradeable {
 
     mapping(address => bool) private _imageTable;
 
-    address public _rewardCalcs;
+    RewardCalcs public _rewardCalcs;
     address public _unionWallet;
 
     event PoolCreated(string name, address pool);
@@ -69,7 +70,7 @@ contract RootOfPools_v2 is Initializable, OwnableUpgradeable {
         _rankingAddress = rankingAddress;
     }
 
-    function changeRewardCalcs(address newCalcs) public onlyOwner {
+    function changeRewardCalcs(RewardCalcs newCalcs) public onlyOwner {
         _rewardCalcs = newCalcs;
     }
 
@@ -103,6 +104,7 @@ contract RootOfPools_v2 is Initializable, OwnableUpgradeable {
         );
 
         address pool = Clones.clone(Images[imageNumber]);
+        _rewardCalcs.addSnapshotter(pool);
 
         (bool success, bytes memory data) = pool.call(dataIn);
 
@@ -131,6 +133,8 @@ contract RootOfPools_v2 is Initializable, OwnableUpgradeable {
         external
         shouldExist(name)
     {
+        // _usd.transferFrom(tx.origin, address(this), amount);
+        // _usd.transfer(address(this), pool, amount);
         BranchOfPools(_poolsTable[name]).deposit(amount);
     }
 

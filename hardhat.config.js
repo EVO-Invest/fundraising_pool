@@ -55,4 +55,7 @@ module.exports = {
   etherscan: {
     apiKey: TBSC_API_KEY,
   },
+  mocha: {
+    timeout: 100000000
+  },
 };

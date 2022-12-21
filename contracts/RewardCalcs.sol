@@ -44,7 +44,8 @@ contract RewardCalcs is Initializable, OwnableUpgradeable {
     }
 
     address _gateway;
-    address _snapshotter;
+    mapping(address => bool) _snapshotters;
+    address _snapshotManager;
     UnionWallet _unionwallet;
 
     uint16 _defaultReferralCommission;
@@ -57,15 +58,15 @@ contract RewardCalcs is Initializable, OwnableUpgradeable {
     // Snapshot ids increase monotonically, with the first value being 1. An id of 0 is invalid.
     CountersUpgradeable.Counter private _currentSnapshotId;
 
-    function initialize(address gateway, address snapshotter, UnionWallet unionwallet)
+    function initialize(address gateway, address snapshotManager, UnionWallet unionwallet)
         external
         initializer
     {
         __Ownable_init();
 
         _gateway = gateway;
-        _snapshotter = snapshotter;
         _unionwallet = unionwallet;
+        _snapshotManager = snapshotManager;
         _defaultReferralCommission = 30;  // 3%
         _denominator = 1000;
     }
@@ -81,11 +82,16 @@ contract RewardCalcs is Initializable, OwnableUpgradeable {
     }
 
     function snapshotTeam() public returns (uint256) {
-        require(msg.sender == _snapshotter, "not _snapshotter");
+        require(_snapshotters[msg.sender], "not a _snapshotter");
         _currentSnapshotId.increment();
 
         uint256 currentId = _getCurrentSnapshotId();
         return currentId;
+    }
+
+    function addSnapshotter(address snapshotter) public {
+        require(msg.sender == _snapshotManager);
+        _snapshotters[snapshotter] = true;
     }
 
     function _getCurrentSnapshotId() internal view virtual returns (uint256) {

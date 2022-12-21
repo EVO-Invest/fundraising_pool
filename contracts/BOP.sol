@@ -33,7 +33,7 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
     
     State public _state;
 
-    address private _root;
+    RootOfPools_v2 private _root;
 
     uint256 public _stepValue;
     uint256 private _decimals;
@@ -78,14 +78,14 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
     /// @param Step - The step with which we raise funds
     /// @param devUSDAddress - The address of the developers to which they will receive the collected funds
     function init(
-        address Root,
+        RootOfPools_v2 Root,
         uint256 VALUE,
         uint256 Step,
         address devUSDAddress,
         address tokenUSD,
         uint256 unlockTime
     ) external initializer {
-        require(Root != address(0), "The root address must not be zero.");
+        require(address(Root) != address(0), "The root address must not be zero.");
         require(
             devUSDAddress != address(0),
             "The devUSDAddress must not be zero."
@@ -102,8 +102,8 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
 
         __Ownable_init();
 
-        _rewardCalcs = RewardCalcs(RootOfPools_v2(_root)._rewardCalcs());
-        _unionWallet = UnionWallet(RootOfPools_v2(_root)._unionWallet());
+        _rewardCalcs = RewardCalcs(_root._rewardCalcs());
+        _unionWallet = UnionWallet(_root._unionWallet());
 
         _teamSnapshotId = _rewardCalcs.snapshotTeam();
         updateFundraisingTarget(VALUE * _decimals);
@@ -132,7 +132,7 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
         if (stateSameOrAfter(State.WaitingToken) && _ownerAlreadyCollectedFunds) {
             _ownerAlreadyCollectedFunds = false;
             _usd.transfer(
-                owner(),
+                _root.owner(),
                 _fundMath.ownersShare()
             );
         }
@@ -202,9 +202,7 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
     function deposit(uint256 amount) external stateCheck(State.Fundraising, true) {
         _usd.transferFrom(tx.origin, address(this), amount);
         address user = _unionWallet.resolveIdentity(tx.origin);
-        _usdEmergency[user] += amount;
-
-        uint256[] memory rank = Ranking(RootOfPools_v2(_root)._rankingAddress())
+        uint256[] memory rank = Ranking(_root._rankingAddress())
             .getParRankOfUser(user);
 
         require(amount >= /* Min=*/ _decimals * rank[0] && 
@@ -212,6 +210,7 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
                 amount % _stepValue == 0,
                 "DEPOSIT: Wrong funding!");
 
+        _usdEmergency[user] += amount;
         uint256 totalCommissions = amount * /* CommissionPrc=*/ rank[2] / 100;
         _fundMath.onDepositInputTokens(user, amount - totalCommissions, totalCommissions);
         (uint256 referralCommission, address referral) = _rewardCalcs.calculateReferralsCommission(user, amount, totalCommissions, amount * _defaultCommission / 100);
@@ -238,7 +237,9 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
         stateCheck(State.TokenDistribution, false)
         stateCheck(State.Emergency, false)
     {
-        _fundMath.closeFundraising(0, owner());
+        uint256 remainingPayment = _fundMath.requiredAmountToCloseFundraising();
+        _usd.transferFrom(_root.owner(), address(this), remainingPayment);
+        _fundMath.closeFundraising(remainingPayment, owner());
         _state = State.WaitingToken;
     }
 
