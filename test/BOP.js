@@ -219,16 +219,14 @@ describe("BOP Megatest", function () {
 
     let totalPayments = 0
     it ("Collects payments", async () => {
+        const poolAddress = (await rop.Pools(0)).pool
         for (let i = 0; i < investors.length; ++i) {
             const payment = ((i % 5) + 1) * 100;
             totalPayments += payment
             const walletIndex = i % investors[i].wallets.length;
             const wallet = investors[i].wallets[walletIndex]
             // OMG. BOP is calling transferFrom, not ROP. Pretty dirty.
-            const approvalTx = await usdt.connect(wallet).approve(
-                (await rop.Pools(0)).pool,
-                payment * 1000000
-            )
+            const approvalTx = await usdt.connect(wallet).approve(poolAddress, payment * 1000000)
             await approvalTx.wait()
             const depositTx = await rop.connect(wallet).deposit("First Pool", payment * 1000000)
             await depositTx.wait()
@@ -244,6 +242,10 @@ describe("BOP Megatest", function () {
 
             console.log(`${i}. Depositing ${payment} from ${wallet.address}. Total deposited ${totalPayments}. Remaining ${remainingUSD.toString()}`);
 
+            if (totalPayments >= 119500) {
+                console.log(`OK, closing fundraising.`)
+                break
+            }
             if (parseInt(remainingUSD.toString()) < 100) {
                 console.log(`OK, closing fundraising, as only ${remainingUSD.toString()} remained`)
                 break
