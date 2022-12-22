@@ -45,6 +45,7 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
     // So that token.balanceOf(this) + _DISTRIBUTED_TOKEN = amount of received token.
     uint256 public _DISTRIBUTED_TOKEN;
     bool _ownerAlreadyCollectedFunds;
+    bool _firstClaimHappened;
 
     /* _usdEmergency stores the original amount of funds deposited,
        no commissions, no nothing. So that in case of emergency,
@@ -99,6 +100,7 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
         _devUSDAddress = devUSDAddress;
         _unlockTime = unlockTime;
         _ownerAlreadyCollectedFunds = false;
+        _firstClaimHappened = false;
 
         __Ownable_init();
 
@@ -137,7 +139,7 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
             );
         }
 
-        if (stateSameOrAfter(State.TokenDistribution) || (block.timestamp >= _unlockTime)) {
+        if (_firstClaimHappened || (block.timestamp >= _unlockTime)) {
             address user = _unionWallet.resolveIdentity(tx.origin);
             // Ref. payments are also treates as salary by our depositing code.
             _usd.transfer(
@@ -179,6 +181,11 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
         stateCheck(State.Paused, false)
         stateCheck(State.TokenDistribution, false)
     {
+        if (_state == State.WaitingToken) {
+            // If developers decided not to take our money,
+            // we can enter the emergency only if we got a full refund.
+            require(_usd.balanceOf(address(this)) >= _fundMath.getTotalCollected());
+        }
         _state = State.Emergency;
     }
 
@@ -268,11 +275,12 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
 
     /// @notice Allows users to brand the distributed tokens
     function claim() external stateCheck(State.TokenDistribution, true) {
-        address user = _unionWallet.resolveIdentity(msg.sender);
+        address user = _unionWallet.resolveIdentity(tx.origin);
         uint256 amount = _fundMath.claimOutputTokens(user, _DISTRIBUTED_TOKEN + _token.balanceOf(address(this)));
         require(amount > 0, "CLAIM: You have no unredeemed tokens!");
         _DISTRIBUTED_TOKEN += amount;
-        _token.transfer(msg.sender, amount);
+        require(_token.transfer(tx.origin, amount));
+        _firstClaimHappened = true;
     }
 
     function stateSameOrAfter(State s) public view returns (bool) {
@@ -306,6 +314,7 @@ contract BranchOfPools is Initializable, OwnableUpgradeable {
     /// @notice Returns the number of tokens the user can take at the moment
     /// @param user - address user
     function myCurrentAllocation(address user) public view returns (uint256) {
+        user = _unionWallet.resolveIdentity(user);
         if (_state != State.TokenDistribution)
             return 0;
         return _fundMath.myOutputTokens(user, _DISTRIBUTED_TOKEN + _token.balanceOf(address(this)));

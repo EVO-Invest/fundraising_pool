@@ -98,4 +98,8 @@ library FundCoreLib {
     function getFundraisingTarget(FundMath storage data) internal view returns (uint256) {
         return data.fundraisingTarget;
     }
+
+    function getTotalCollected(FundMath storage data) internal view returns (uint256) {
+        return data.collected;
+    }
 }

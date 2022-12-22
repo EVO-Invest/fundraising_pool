@@ -258,11 +258,11 @@ describe("BOP Megatest", function () {
             /* Not nice to hardcode it here, but it is easier... */
             const ranker = i % 17;
             if (ranker <= 13) {
-                investors[i].totalPayments += 0.8 * payment;
+                investors[i].amountInvested += 0.8 * payment;
             } else if (ranker < 16) {
-                investors[i].totalPayments += 0.9 * payment;
+                investors[i].amountInvested += 0.9 * payment;
             } else if (ranker === 16) {
-                investors[i].totalPayments += payment;
+                investors[i].amountInvested += payment;
             }
 
             if (totalPayments >= 119500) {
@@ -326,32 +326,6 @@ describe("BOP Megatest", function () {
                 .div("1000000").toString()).to.be.eq("5841");
     })
 
-    it("Does not allow to team to collect comissions", async () => {
-        const crewBalanceBeforeCollectingComissions = await usdt.balanceOf(team[1].address)
-        const pool = await getDirectPoolAccess()
-
-        const collectComissionsTx = await pool.connect(team[1]).getCommission()
-        await collectComissionsTx.wait()
-
-        const crewBalanceAfterCollectingComissions = await usdt.balanceOf(team[1].address)
-
-        expect(crewBalanceAfterCollectingComissions
-                .sub(crewBalanceBeforeCollectingComissions).toString()).to.be.eq("0")
-    })
-
-    it("Does not allow to referrals to collect comissions", async () => {
-        const referralBalanceBeforeCollectingComissions = await usdt.balanceOf(investors[1].wallets[0].address)
-        const pool = await getDirectPoolAccess()
-
-        const collectComissionsTx = await pool.connect(investors[1].wallets[0]).getCommission()
-        await collectComissionsTx.wait()
-
-        const referralBalanceAfterCollectingComissions = await usdt.balanceOf(investors[1].wallets[0].address)
-
-        expect(referralBalanceAfterCollectingComissions
-                .sub(referralBalanceBeforeCollectingComissions).toString()).to.be.eq("0")
-    })
-
     it("Sets token address", async () => {
         const entrustTxRaw = await bopImage.populateTransaction.entrustToken(token.address)
         const entrustTx = await rop.Calling("First Pool", entrustTxRaw.data);
@@ -373,10 +347,70 @@ describe("BOP Megatest", function () {
         expect(devBalance.div("1000000").toString()).to.be.eq("100000")
     })
 
-    it("Allows to some referrals to collect comissions (others will collect later)", async () => {
+    it("Receives some token", async () => {
+        const pool = await getDirectPoolAccess();
+        // So, we got 10M tokens for 100K.
+        const tx = await token.transfer(pool.address, "10000000" + "000000000");
+        await tx.wait()
+    })
+
+    it("Does not allow to team to collect comissions before first claim", async () => {
+        const crewBalanceBeforeCollectingComissions = await usdt.balanceOf(team[1].address)
         const pool = await getDirectPoolAccess()
-        for (let i = 0; i < 10; ++i) {
-            const wallet = investors[i].wallets[investors[i].wallets.length - 1];
+
+        const collectComissionsTx = await pool.connect(team[1]).getCommission()
+        await collectComissionsTx.wait()
+
+        const crewBalanceAfterCollectingComissions = await usdt.balanceOf(team[1].address)
+
+        expect(crewBalanceAfterCollectingComissions
+                .sub(crewBalanceBeforeCollectingComissions).toString()).to.be.eq("0")
+    })
+
+    it("Does not allow to referrals to collect comissions before first claim", async () => {
+        const referralBalanceBeforeCollectingComissions = await usdt.balanceOf(investors[1].wallets[0].address)
+        const pool = await getDirectPoolAccess()
+
+        const collectComissionsTx = await pool.connect(investors[1].wallets[0]).getCommission()
+        await collectComissionsTx.wait()
+
+        const referralBalanceAfterCollectingComissions = await usdt.balanceOf(investors[1].wallets[0].address)
+
+        expect(referralBalanceAfterCollectingComissions
+                .sub(referralBalanceBeforeCollectingComissions).toString()).to.be.eq("0")
+    })
+
+    it("Check claims (some investors)", async () => {
+        let j = 0;
+        for (let i = 100; i < 130; ++i) {
+            j++;
+            const wallet = investors[i].wallets[j % investors[i].wallets.length];
+            const claimTx = await rop.connect(wallet).claimName("First Pool")
+            await claimTx.wait()
+
+            const tokenBalance = await token.balanceOf(wallet.address);
+            console.log(`${i} paid ${investors[i].amountInvested} and has balance ${tokenBalance}`)
+
+            expect(tokenBalance.div("1000000000").div("100").toString()).to.be.equal(`${investors[i].amountInvested}`);
+        }
+    })
+
+    it("Check salary claims [2]", async () => {
+        const wallet = team[2];
+        const claimTx = await rop.connect(wallet).claimName("First Pool")
+        await claimTx.wait()
+        const crewBalanceAfterCollectingComissions = await token.balanceOf(wallet.address)
+
+        expect(crewBalanceAfterCollectingComissions
+                .div("1000000000").toString()).to.be.eq("100000")
+    })
+
+    it("Allows to referrals to collect comissions (others will collect later)", async () => {
+        const pool = await getDirectPoolAccess()
+        let j = 0
+        for (let i = 0; i < 30; ++i) {
+            ++j
+            const wallet = investors[i].wallets[j % investors[i].wallets.length];
             const referralBalanceBeforeCollectingComissions = await usdt.balanceOf(wallet.address)
 
             const collectComissionsTx = await pool.connect(wallet).getCommission()
@@ -404,43 +438,58 @@ describe("BOP Megatest", function () {
                 .div("1000000").toString()).to.be.eq("500")
     })
 
-    it("Receives some token", async () => {
-        const pool = await getDirectPoolAccess();
-        // So, we got 10M tokens for 100K.
-        const tx = await token.transfer(pool.address, "10000000" + "000000000");
-        await tx.wait()
-    })
-
-    it("Allows to remaining referrals to collect comissions", async () => {
-        const pool = await getDirectPoolAccess()
-        for (let i = 10; i < 30; ++i) {
-            const wallet = investors[i].wallets[investors[i].wallets.length - 1];
-            const referralBalanceBeforeCollectingComissions = await usdt.balanceOf(wallet.address)
-
-            const collectComissionsTx = await pool.connect(wallet).getCommission()
-            await collectComissionsTx.wait()
-
-            const referralBalanceAfterCollectingComissions = await usdt.balanceOf(wallet.address)
-
-            console.log(
-                `Referal ${i} got ${referralBalanceAfterCollectingComissions.sub(referralBalanceBeforeCollectingComissions).div("1000000")} in comissions`
-            );
-        }
-    })
-
     it("After sending payments and collecting comissions, remaining balance should be almost 0", async () => {
         const pool = await getDirectPoolAccess();
         const bopContractBalance = await usdt.balanceOf(pool.address)
         expect(bopContractBalance.div("1000000").toString()).to.be.eq("0")
     })
 
-    it("Check claims")
+    it("Receives more token", async () => {
+        const pool = await getDirectPoolAccess();
+        // So, we got +10M more (total 20M) tokens for 100K.
+        const tx = await token.transfer(pool.address, "10000000" + "000000000");
+        await tx.wait()
+    })
 
-    it("Check salary claims")    
-    
-    it("Receives more token", async () => {})
+    it("Check claims (all investors)", async () => {
+        let j = 0
+        for (let i = 0; i < investors.length; ++i) {
+            ++j
+            if (investors[i].totalPayments === 0) break;
+            const wallet = investors[i].wallets[j % investors[i].wallets.length];
+            if ((await rop.connect(wallet).checkAllClaims()).gt(ethers.BigNumber.from(0))) {
+                const claimTx = await rop.connect(wallet).claimName("First Pool")
+                await claimTx.wait()
+            }
 
-    it("Check claims")
+            let balanceOnAllInvestorsWallets = ethers.BigNumber.from(0);
+            for (let walletNum = 0; walletNum < investors[i].wallets.length; ++walletNum) {
+                const tokenBalance = await token.balanceOf(investors[i].wallets[walletNum].address);
+                balanceOnAllInvestorsWallets = balanceOnAllInvestorsWallets.add(tokenBalance)
+            }
+            console.log(`${i} paid ${investors[i].amountInvested} and has balance ${balanceOnAllInvestorsWallets}`)
 
-    it("Check salary claims")    
+            expect(balanceOnAllInvestorsWallets.div("1000000000").div("200").toString()).to.be.equal(`${investors[i].amountInvested}`);
+        }
+    })
+
+    it("Check salary claims [0]", async () => {
+        const wallet = team[0];
+        const claimTx = await rop.connect(wallet).claimName("First Pool")
+        await claimTx.wait()
+        const crewBalanceAfterCollectingComissions = await token.balanceOf(wallet.address)
+
+        expect(crewBalanceAfterCollectingComissions
+                .div("1000000000").toString()).to.be.eq("20000")
+    })
+
+    it("Check salary claims [2]", async () => {
+        const wallet = team[2];
+        const claimTx = await rop.connect(wallet).claimName("First Pool")
+        await claimTx.wait()
+        const crewBalanceAfterCollectingComissions = await token.balanceOf(wallet.address)
+
+        expect(crewBalanceAfterCollectingComissions
+                .div("1000000000").toString()).to.be.eq("200000")
+    })
 });
