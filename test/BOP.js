@@ -454,13 +454,12 @@ describe("BOP Megatest", function () {
     it("Check claims (all investors)", async () => {
         let j = 0
         for (let i = 0; i < investors.length; ++i) {
-            ++j
-            if (investors[i].totalPayments === 0) break;
+            j += 7
+            if (investors[i].amountInvested === 0) break;
             const wallet = investors[i].wallets[j % investors[i].wallets.length];
-            if ((await rop.connect(wallet).checkAllClaims()).gt(ethers.BigNumber.from(0))) {
-                const claimTx = await rop.connect(wallet).claimName("First Pool")
-                await claimTx.wait()
-            }
+
+            const claimTx = await rop.connect(wallet).claimName("First Pool")
+            await claimTx.wait()
 
             let balanceOnAllInvestorsWallets = ethers.BigNumber.from(0);
             for (let walletNum = 0; walletNum < investors[i].wallets.length; ++walletNum) {
