@@ -3,6 +3,7 @@ require("@nomiclabs/hardhat-ethers");
 require("@openzeppelin/hardhat-upgrades");
 require("@nomiclabs/hardhat-etherscan");
 require('hardhat-contract-sizer');
+require("@nomicfoundation/hardhat-network-helpers");
 const { PK, TBSC_API_KEY } = require("./env.json");
 
 module.exports = {
@@ -26,11 +27,23 @@ module.exports = {
     }
   },
   networks: {
+    hardhat: {
+      forking: {
+        url: "https://bsc-dataseed2.binance.org",
+        blockNumber: 24124765,
+      }
+    },
     testbsc: {
       url: `https://data-seed-prebsc-1-s3.binance.org:8545`,
       accounts: [PK],
       gas: 21000000,
     },
+    // forForking: {
+    //   forking: {
+    //     url: "https://bsc-dataseed2.binance.org",
+    //     blockNumber: 24124765, 
+    //   }
+    // },
     eth: {
       url: `https://eth-mainnet.public.blastapi.io`,
       accounts: [PK],
