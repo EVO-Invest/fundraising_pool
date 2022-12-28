@@ -1,441 +1,494 @@
-const {
-    BN, // Big Number support
-    constants, // Common constants, like the zero address and largest integers
-    expectEvent, // Assertions for emitted events
-    expectRevert, // Assertions for transactions that should fail
-  } = require("@openzeppelin/test-helpers");
-  const { inputToConfig } = require("@ethereum-waffle/compiler");
-  const { expect } = require("chai");
-  const { ethers, upgrades } = require("hardhat");
-  const { inTransaction } = require("@openzeppelin/test-helpers/src/expectEvent");
-const { duration } = require("@openzeppelin/test-helpers/src/time");
-  
-  describe("BranchOfPools", async function () {
-    beforeEach(async function () {
-        //Create ranks
-        RANKS = await ethers.getContractFactory("Ranking");
-        [owner, addr1, addr2, addr3, devUSDT, fund, ...addrs] = await ethers.getSigners();
+const { expect, assert } = require("chai");
+const { BigNumber, utils } = require("ethers");
+const { ethers, upgrades } = require("hardhat");
+const { mine } = require("@nomicfoundation/hardhat-network-helpers");
 
-        ranks = await RANKS.deploy();
 
-        ranks
-            .connect(owner)
-            .createRank("Test", ["min", "max", "commission"], [100, 500, 20], true);
+class Investor {
+    constructor() {
+        this.wallets = [];
+        this.amountInvested = 0;
+    }
 
-        ranks
-            .connect(owner)
-            .createRank("Test2", ["min", "max", "commission"], [1000, 5000, 10], true);
+    addWallet(wallet) {
+        this.wallets.push(wallet)
+    }
+}
 
-        //Create USD
-        USDT = await ethers.getContractFactory("BEP20Token");
+
+describe("BOP Megatest", function () {
+    let rop, ranks, usdt, unionwallet, rewardCalcs, bopImage, token;
+    let admin, dev;
+    let getDirectPoolAccess;
+
+    let investors = []
+    let team = []
+
+    // eslint-disable-next-line no-undef
+    before(async () => {
+        [admin, dev] = await ethers.getSigners();
+
+        // deploy ranking
+
+        const Ranks = await ethers.getContractFactory("Ranking");
+        ranks = await Ranks.deploy();
+
+        ranks.createRank(
+            "Common",
+            ["Min", "Max", "Commission"],
+            [100, 500, 20],
+            true
+        );
+      
+        ranks.createRank(
+            "Rare",
+            ["Min", "Max", "Commission"],
+            [100, 1000, 10],
+            true
+        );
+      
+        ranks.createRank(
+            "Legendary",
+            ["Min", "Max", "Commission"],
+            [100, 1000, 0],
+            true
+        );
+      
+        ranks.createRank(
+            "Admin",
+            ["Min", "Max", "Commission"],
+            [0, 10000, 0],
+            true
+        );
+      
+        await ranks.giveRanks([admin.address], "Admin");
+
+        // deploy usdt
+
+        const USDT = await ethers.getContractFactory("BEP20Token");
         usdt = await USDT.deploy(6);
 
-        //Create root
-        ROOT = await ethers.getContractFactory("RootOfPools_v2");
-        root = await ROOT.deploy();
-        await root.initialize(usdt.address, ranks.address);
+        // deploy token
 
-        //Create branch
-        BRANCH = await ethers.getContractFactory("BranchOfPools");
-        branch = await BRANCH.deploy();
-        await branch.init(
-            root.address,
-            4500000000,
-            100,
-            devUSDT.address,
-            usdt.address,
-            0
-        );
+        const TOKEN = USDT;  // shortcut
+        token = await TOKEN.deploy(9);
+
+        // deploy unionwallet
+        
+        const UnionWallet = await ethers.getContractFactory("UnionWallet");
+        unionwallet = await upgrades.deployProxy(UnionWallet);
+         
+        // deploy rop
+
+        const ROP = await ethers.getContractFactory("RootOfPools_v2");
+        rop = await upgrades.deployProxy(ROP, [usdt.address, ranks.address], {
+             initializer: "initialize",
+        });
+        const ropSetUnionwalletTx = await rop.changeUnionWallet(unionwallet.address)
+        await ropSetUnionwalletTx.wait()
+
+        // deploy reward calcs
+
+        const RewardCalcs = await ethers.getContractFactory("RewardCalcs");
+        rewardCalcs = await upgrades.deployProxy(RewardCalcs, [admin.address, rop.address, unionwallet.address])
+        const setRewardsContractInRopTx = await rop.changeRewardCalcs(rewardCalcs.address);
+        await setRewardsContractInRopTx.wait()
+
+        // deploy bop image
+        
+        const BOP = await ethers.getContractFactory("BranchOfPools");
+        bopImage = await BOP.deploy();
+        await bopImage.deployed();
+
+        // Add deployed BOP as an image
+        const addBopToRopTx = await rop.addImage(bopImage.address);
+        await addBopToRopTx.wait();
+
+        // Check
+        let imageNum = 0;
+        while (true) {
+            const imageAddr = await rop.Images(imageNum);
+            if (imageAddr == bopImage.address)
+            break;
+            ++imageNum;
+        }
+
+        // Some other preparations
+        await setSalaries();
+        await generateWalletsAndFundThem();
+        await overrideCommissionsForSomeReferrals();
+        
+        // And deploy BOP from ROP.
+        const createBopTx = await rop.createPool("First Pool", imageNum, 
+            (await bopImage.populateTransaction.init(
+                rop.address,
+                100000,
+                100,
+                dev.address,
+                usdt.address,
+                2524608000 /* somewhat 2050/1/1 */
+            )).data);
+        const createBopEffects = await createBopTx.wait()
+        const responseLogs = createBopEffects.events.filter(e => e.event === "Response");
+        expect(responseLogs).to.have.length(1)
+        expect(responseLogs[0].args.success).to.be.true
+
+        getDirectPoolAccess = async () => {
+            const poolAddress = (await rop.Pools(0)).pool
+            return BOP.attach(poolAddress)
+        }
     });
-    describe("States", async function(){
-        describe("Pause", async function(){
-            describe("Must be performed",async function(){
-                it("changeTargetValue", async function(){
-                    expect((await branch._VALUE()).toString()).to.equal("4500000000000000"); 
 
-                    await branch.connect(owner).changeTargetValue(5000);
-
-                    expect((await branch._VALUE()).toString()).to.equal("5000"); 
-                });
-
-                it("changeStepValue", async function(){
-                    expect((await branch._stepValue()).toString()).to.equal("100000000"); 
-
-                    await branch.connect(owner).changeStepValue(200);
-
-                    expect((await branch._stepValue()).toString()).to.equal("200"); 
-                });
-
-                it("startFundraising", async function(){
-                    expect(await branch._state()).to.equal(0); 
-
-                    await branch.connect(owner).startFundraising();
-
-                    expect(await branch._state()).to.equal(1); 
-                });
-
-                it("importTable", async function(){ 
-                    expect((await branch.myAllocation(addr1.address)).toString()).to.equal("0");
-                    expect((await branch.myAllocation(addr2.address)).toString()).to.equal("0");
-                    expect((await branch.myAllocation(addr3.address)).toString()).to.equal("0");
-
-                    await branch.connect(owner).importTable([addr1.address, addr2.address, addr3.address], [100,100,100]);
-
-                    expect((await branch.myAllocation(addr1.address)).toString()).to.equal("100");
-                    expect((await branch.myAllocation(addr2.address)).toString()).to.equal("100");
-                    expect((await branch.myAllocation(addr3.address)).toString()).to.equal("100");
-                });
-
-                it("importFR", async function(){
-                    expect(await branch._FUNDS_RAISED()).to.equal(0); 
-
-                    await branch.connect(owner).importFR(1000);
-
-                    expect(await branch._FUNDS_RAISED()).to.equal(1000); 
-                });
-
-                it("importCC", async function(){
-                    expect(await branch._CURRENT_COMMISSION()).to.equal(0); 
-
-                    await branch.connect(owner).importCC(1000);
-
-                    expect(await branch._CURRENT_COMMISSION()).to.equal(1000); 
-                });
-
-                it("closeImport", async function() {
-                    expect(await branch._state()).to.equal(0); 
-
-                    await branch.connect(owner).closeImport();
-
-                    expect(await branch._state()).to.equal(2); 
-                });
-            });
-
-            describe("Must be rejected",async function(){
-                describe("changeTargetValue", async function(){
-                    it("If the caller is not the owner", async function(){
-                        await expect(branch.connect(addr1).changeTargetValue(50000)).to.be.reverted;
-                    });
-
-                    it("If called in an inappropriate state", async function(){
-                        await branch.connect(owner).closeImport();
-
-                        await expect(branch.connect(owner).changeTargetValue(50000)).to.be.reverted;
-                    });
-                });
-
-                describe("changeStepValue", async function(){
-                    it("If the caller is not the owner", async function(){
-                        await expect(branch.connect(addr1).changeStepValue(100)).to.be.reverted;
-                    });
-
-                    it("If called in an inappropriate state", async function(){
-                        await branch.connect(owner).closeImport();
-
-                        await expect(branch.connect(owner).changeStepValue(100)).to.be.reverted;
-                    });
-                });
-
-                describe("startFundraising", async function(){
-                    it("If the caller is not the owner", async function(){
-                        await expect(branch.connect(addr1).startFundraising()).to.be.reverted;
-                    });
-
-                    it("If called in an inappropriate state", async function(){
-                        await branch.connect(owner).closeImport();
-
-                        await expect(branch.connect(owner).startFundraising()).to.be.reverted;
-                    });
-                });
-
-                describe("importTable", async function(){
-                    it("If the caller is not the owner", async function(){
-                        await expect(branch.connect(addr1).importTable([addr1.address, addr2.address], [100, 100])).to.be.reverted;
-                    });
-
-                    it("If called in an inappropriate state", async function(){
-                        await branch.connect(owner).closeImport();
-
-                        await expect(branch.connect(owner).importTable([addr1.address, addr2.address], [100, 100])).to.be.reverted;
-                    });
-                });
-
-                describe("importFR", async function(){
-                    it("If the caller is not the owner", async function(){
-                        await expect(branch.connect(addr1).importFR(100)).to.be.reverted;
-                    });
-
-                    it("If called in an inappropriate state", async function(){
-                        await branch.connect(owner).closeImport();
-
-                        await expect(branch.connect(owner).importFR(100)).to.be.reverted;
-                    });
-                });
-
-                describe("importCC", async function(){
-                    it("If the caller is not the owner", async function(){
-                        await expect(branch.connect(addr1).importCC(100)).to.be.reverted;
-                    });
-
-                    it("If called in an inappropriate state", async function(){
-                        await branch.connect(owner).closeImport();
-
-                        await expect(branch.connect(owner).importCC(100)).to.be.reverted;
-                    });
-                });
-
-                describe("closeImport", async function(){
-                    it("If the caller is not the owner", async function(){
-                        await expect(branch.connect(addr1).closeImport()).to.be.reverted;
-                    });
-
-                    it("If called in an inappropriate state", async function(){
-                        await branch.connect(owner).startFundraising();
-
-                        await expect(branch.connect(owner).closeImport()).to.be.reverted;
-                    });
-                });
-            });
-        });
-
-        describe("Fundrasing", async function(){
-            beforeEach(async function(){
-                await branch.connect(owner).startFundraising();
-
-                await usdt.connect(owner).approve(branch.address, "10000000000000");
-            });
-
-            describe("Must be performed",async function(){
-                it("stopEmergency", async function(){
-                    expect(await branch._state()).to.equal(1);
-
-                    await branch.connect(owner).stopEmergency();
-
-                    expect(await branch._state()).to.equal(4);
-                });
-
-                it("deposit", async function(){
-                    expect((await branch.myAllocation(owner.address)).toString()).to.equal("0");
-
-                    await branch.connect(owner).deposit("100000000");
-
-                    expect((await branch.myAllocation(owner.address)).toString()).to.equal("80000000");
-                });
-
-                it("stopFundraising", async function(){
-                    expect(await branch._state()).to.equal(1);
-
-                    await branch.connect(owner).stopFundraising();
-    
-                    expect(await branch._state()).to.equal(2);
-                });
-
-                it("changeTargetValue", async function(){
-                    expect((await branch._VALUE()).toString()).to.equal("4500000000000000"); 
-
-                    await branch.connect(owner).changeTargetValue(5000);
-
-                    expect((await branch._VALUE()).toString()).to.equal("5000"); 
-                });
-
-                it("changeStepValue", async function(){
-                    expect((await branch._stepValue()).toString()).to.equal("100000000"); 
-
-                    await branch.connect(owner).changeStepValue(200);
-
-                    expect((await branch._stepValue()).toString()).to.equal("200"); 
-                });
-            });
-
-            describe("Must be rejected",async function(){
-                describe("stopEmergency", async function(){
-                    it("If the caller is not the owner", async function(){
-                        await expect(branch.connect(addr1).stopEmergency()).to.be.reverted;
-                    });
-
-                    it("If called in an inappropriate state", async function(){
-                        await branch.connect(owner).deposit("100000000");
-                        await branch.connect(owner).stopFundraising();
-
-                        TOKEN = await ethers.getContractFactory("SimpleToken");
-                        token = await TOKEN.deploy("Test", "TST", 10000);
-                        await token.connect(owner).transfer(branch.address, 10000);
-                        await branch.connect(owner).entrustToken(token.address);
-
-                        await expect(branch.connect(owner).stopEmergency()).to.be.reverted;
-                    });
-                });
-
-                describe("deposit", async function(){
-                    it("If called in an inappropriate state", async function(){
-                        await branch.connect(owner).stopEmergency();
-
-                        await expect(branch.connect(owner).deposit(100000000)).to.be.reverted;
-                    });
-
-                    it("If the user did not allow the money to be used", async function(){
-                        await usdt.connect(owner).approve(branch.address, 0);
-
-                        await expect(branch.connect(owner).deposit(100000000)).to.be.reverted;
-                    });
-
-                    it("If the user deposits too little", async function(){
-                        await expect(branch.connect(owner).deposit(1)).to.be.reverted;
-                    });
-
-                    it("If the user deposits too much", async function(){
-                        await expect(branch.connect(owner).deposit(10000000000)).to.be.reverted;
-                    });
-
-                    it("If the user deposits without complying with the step", async function(){
-                        await expect(branch.connect(owner).deposit(10000000000)).to.be.reverted;
-                    });
-
-                    it("If the user exceeds the amount of funds collected", async function(){
-                        await branch.connect(owner).changeTargetValue(1);
-
-                        await expect(branch.connect(owner).deposit(100000000)).to.be.reverted;
-                    });
-                });
-
-                describe("stopFundraising", async function(){
-                    it("If the caller is not the owner", async function(){
-                        await expect(branch.connect(addr1).stopFundraising()).to.be.reverted;
-                    });
-
-                    it("If called in an inappropriate state", async function(){
-                        await branch.connect(owner).stopEmergency();
-
-                        await expect(branch.connect(owner).stopFundraising()).to.be.reverted;
-                    });
-                });
-
-                describe("changeTargetValue", async function(){
-                    it("If the caller is not the owner", async function(){
-                        await expect(branch.connect(addr1).changeTargetValue(50000)).to.be.reverted;
-                    });
-
-                    it("If called in an inappropriate state", async function(){
-                        await branch.connect(owner).stopFundraising();
-
-                        await expect(branch.connect(owner).changeTargetValue(50000)).to.be.reverted;
-                    });
-                });
-
-                describe("changeStepValue", async function(){
-                    it("If the caller is not the owner", async function(){
-                        await expect(branch.connect(addr1).changeStepValue(100)).to.be.reverted;
-                    });
-
-                    it("If called in an inappropriate state", async function(){
-                        await branch.connect(owner).stopFundraising();
-
-                        await expect(branch.connect(owner).changeStepValue(100)).to.be.reverted;
-                    });
-                });
-            });
-        });
-
-        describe("WaitingToken", async function(){
-            beforeEach(async function(){
-                await branch.connect(owner).startFundraising();
-
-                await usdt.connect(owner).approve(branch.address, "10000000000000");
-
-                await branch.connect(owner).deposit(100000000);
-                await branch.connect(owner).stopFundraising();
-            });
-            describe("Must be performed",async function(){
-                it("entrustToken", async function(){
-                    TOKEN = await ethers.getContractFactory("SimpleToken");
-                    token = await TOKEN.deploy("Test", "TST", 10000);
-                    await token.connect(owner).transfer(branch.address, 10000);
-                    await branch.connect(owner).entrustToken(token.address);
-
-                    expect(await branch._token()).to.equal(token.address);
-                });
-
-            });
-            describe("Must be rejected",async function() {
-                describe("entrustToken", async function() {
-                    it("If the caller is not the owner", async function(){
-                        TOKEN = await ethers.getContractFactory("SimpleToken");
-                        token = await TOKEN.deploy("Test", "TST", 10000);
-                        await token.connect(owner).transfer(branch.address, 10000);
-
-                        await expect(branch.connect(addr1).entrustToken(token.address)).to.be.reverted;
-                    });
-
-                    it("If developers will try to distribute different tokens",async function() {
-                        TOKEN = await ethers.getContractFactory("SimpleToken");
-                        token = await TOKEN.deploy("Test", "TST", 10000);
-                        await token.connect(owner).transfer(branch.address, 10000);
-                        await branch.connect(owner).entrustToken(token.address);
-
-                        token2 = await TOKEN.deploy("Test", "TST", 10000);
-                        await token2.connect(owner).transfer(branch.address, 10000);
-                        
-                        await expect(branch.connect(owner).entrustToken(token2.address)).to.be.reverted;
-                    });
-                });
-            });
-        });
-
-        describe("TokenDistribution", async function() {
-            beforeEach(async function() {
-                await branch.connect(owner).startFundraising();
-
-                await usdt.connect(owner).approve(branch.address, "10000000000000");
-
-                await branch.connect(owner).deposit(100000000);
-                await branch.connect(owner).stopFundraising();
-
-                TOKEN = await ethers.getContractFactory("SimpleToken");
-                token = await TOKEN.deploy("Test", "TST", 10000);
-                await branch.connect(owner).entrustToken(token.address);
-                await token.connect(owner).transfer(branch.address, 10000);
-            });
-            describe("Must be performed",async function() {
-                it("claim", async function(){
-                    await branch.connect(owner).claim();
-
-                    expect((await branch.connect(owner).myCurrentAllocation(owner.address)).toString()).to.equal("0");
-                });
-            });
-            describe("Must be rejected",async function() {
-                describe("claim", async function(){
-                    it("If the user has not funded the account, but tries to brandish", async function(){
-                        await expect(branch.connect(addr1).claim()).to.be.reverted;
-                    });
-                });
-            });
-        });
-
-        describe("Emergency", async function() {
-            beforeEach(async function() {
-                await branch.connect(owner).startFundraising();
-
-                await usdt.connect(owner).approve(branch.address, "10000000000000");
-
-                await branch.connect(owner).deposit(100000000);
-                await branch.connect(owner).stopEmergency();
-            });
-            describe("Must be performed",async function() {
-                it("paybackEmergency", async function(){
-                    expect((await usdt.connect(owner).balanceOf(owner.address)).toString()).to.equal("115792089237316195423570985008687907853269984665640564039457584007913029639935");
-
-                    await branch.connect(owner).paybackEmergency();
-
-                    expect((await usdt.connect(owner).balanceOf(owner.address)).toString()).to.equal("115792089237316195423570985008687907853269984665640564039457584007913129639935");
-                });
-            });
-            describe("Must be rejected",async function() {
-                describe("paybackEmergency", async function(){
-                    it("If the user did not deposit money, but is trying to get it back", async function(){
-                        await expect(branch.connect(addr1).paybackEmergency()).to.be.reverted;
-                    });
-                });
-            });
-        });
+    const setSalaries = async () => {
+        for (let prc of [1, 5, 10]) {
+            const wallet = ethers.Wallet.createRandom().connect(admin.provider)
+            team.push(wallet)
+            const tx = await rewardCalcs.addTeamMember(wallet.address, prc, 1);
+            await tx.wait()
+            await fundWallet(wallet.address)
+        }
+
+        const tx = await rewardCalcs.connect(team[1]).updateMyRewardTypeChoice(0);
+        await tx.wait()
+    }
+
+    const fundWallet = async (address) => {
+        const fundWithEthers = await admin.sendTransaction({from: admin.address, to: address, value: "100000000000000000"})
+        await fundWithEthers.wait()
+
+        const fundWithBUSD = await usdt.transfer(address, "1500000000") // 1500 USD
+        await fundWithBUSD.wait()
+    }
+
+    const overrideCommissionsForSomeReferrals = async () => {
+        const tx = await rewardCalcs.setCommissionForReferrer(investors[4].wallets[0].address, 50);
+        await tx.wait()
+    }
+
+    const generateWalletsAndFundThem = async () => {
+        for (let investorID = 0; investorID < 500; ++investorID) {
+            if (investorID % 100 == 0) console.log(`Generated ${investors.length} investors`);
+            const newInvestor = new Investor();
+            const mainWallet = ethers.Wallet.createRandom().connect(admin.provider)
+            await fundWallet(mainWallet.address)
+            newInvestor.addWallet(mainWallet)
+            investors.push(newInvestor)
+
+            // 25% users have 2 wallets, 25% have 3.
+            const extraWallets = investorID % 4;
+            let lastExtraWallet = mainWallet
+            if (extraWallets > 1) {
+                for (let i = 1; i < extraWallets; ++i) {
+                    const extraWallet = ethers.Wallet.createRandom().connect(admin.provider)
+                    await fundWallet(extraWallet.address)
+                    newInvestor.addWallet(extraWallet)
+                    const attachTx = await unionwallet.connect(lastExtraWallet).attachToIdentity(extraWallet.address)
+                    await attachTx.wait()
+                    lastExtraWallet = extraWallet
+                }
+            }
+
+            // first 20 people are acting as referals. Some people don't have referals.
+            const referalId = investorID % 30;
+            if (referalId < 20 && investorID > 20) {
+                const setReferalTx = await rewardCalcs.setReferral(mainWallet.address, investors[referalId].wallets[0].address)
+                await setReferalTx.wait()
+            }
+
+            // Assign ranks
+            const ranker = investorID % 17;
+            let rankTx;
+            if (ranker === 13) {
+                rankTx = await ranks.giveRanks([mainWallet.address], "Common")
+            } else if (ranker > 13 && ranker < 16) {
+                rankTx = await ranks.giveRanks([mainWallet.address], "Rare")
+            } else if (ranker === 16) {
+                rankTx = await ranks.giveRanks([mainWallet.address], "Legendary")
+            }
+            if (rankTx) await rankTx.wait()
+        }
+    }
+
+    it ("Should be Unpaused successfully", async () => {
+        const txRaw = await bopImage.populateTransaction.startFundraising();
+        const tx = await rop.Calling("First Pool", txRaw.data);
+        const effects = await tx.wait()
+        const responseLogs = effects.events.filter(e => e.event === "Response");
+        expect(responseLogs).to.have.length(1)
+        expect(responseLogs[0].args.success).to.be.true
     });
-  });
+
+    it ("Computes required amount right after open correctly", async () => {
+        const getAdminPaymentTxRaw = await bopImage.populateTransaction.requiredAmountToCloseFundraising()
+        const getAdminPaymentTx = await rop.Calling("First Pool", getAdminPaymentTxRaw.data);
+        const effects = await getAdminPaymentTx.wait()
+        const responseLogs = effects.events.filter(e => e.event === "Response");
+        expect(responseLogs).to.have.length(1)
+        expect(responseLogs[0].args.success).to.be.true
+        const remaining = new ethers.BigNumber.from(responseLogs[0].args[2])
+        const remainingUSD = remaining.div("1000000")
+        expect(remainingUSD.toString()).to.be.equal("100500")
+    })
+
+    let totalPayments = 0
+    it ("Collects payments", async () => {
+        const poolAddress = (await rop.Pools(0)).pool
+        for (let i = 0; i < investors.length; ++i) {
+            const payment = ((i % 5) + 1) * 100;
+            totalPayments += payment
+            const walletIndex = i % investors[i].wallets.length;
+            const wallet = investors[i].wallets[walletIndex]
+            // OMG. BOP is calling transferFrom, not ROP. Pretty dirty.
+            const approvalTx = await usdt.connect(wallet).approve(poolAddress, payment * 1000000)
+            await approvalTx.wait()
+            const depositTx = await rop.connect(wallet).deposit("First Pool", payment * 1000000)
+            await depositTx.wait()
+
+            const getAdminPaymentTxRaw = await bopImage.populateTransaction.requiredAmountToCloseFundraising()
+            const getAdminPaymentTx = await rop.Calling("First Pool", getAdminPaymentTxRaw.data);
+            const effects = await getAdminPaymentTx.wait()
+            const responseLogs = effects.events.filter(e => e.event === "Response");
+            expect(responseLogs).to.have.length(1)
+            expect(responseLogs[0].args.success).to.be.true
+            const remaining = new ethers.BigNumber.from(responseLogs[0].args[2])
+            const remainingUSD = remaining.div("1000000")
+
+            console.log(`${i}. Depositing ${payment} from ${wallet.address}. Total deposited ${totalPayments}. Remaining ${remainingUSD.toString()}`);
+
+            /* Not nice to hardcode it here, but it is easier... */
+            const ranker = i % 17;
+            if (ranker <= 13) {
+                investors[i].amountInvested += 0.8 * payment;
+            } else if (ranker < 16) {
+                investors[i].amountInvested += 0.9 * payment;
+            } else if (ranker === 16) {
+                investors[i].amountInvested += payment;
+            }
+
+            if (totalPayments >= 119500) {
+                console.log(`OK, closing fundraising.`)
+                break
+            }
+            // if (parseInt(remainingUSD.toString()) < 100) {
+            //     console.log(`OK, closing fundraising, as only ${remainingUSD.toString()} remained`)
+            //     break
+            // }
+        }
+    })
+
+    it("Allows to send 1% of collected USD to the project during the fundraising", async () => {
+        const presendTxRaw = await bopImage.populateTransaction.preSend("1000" + "000000")
+        const presendTx = await rop.Calling("First Pool", presendTxRaw.data);
+        const effects = await presendTx.wait()
+        const responseLogs = effects.events.filter(e => e.event === "Response");
+        expect(responseLogs).to.have.length(1)
+        expect(responseLogs[0].args.success).to.be.true
+
+        const devBalance = await usdt.balanceOf(dev.address);
+        expect(devBalance.div("1000000").toString()).to.be.eq("1000")
+    })
+
+    it("Closes fund", async () => {
+        const stopFundraisingTxRaw = await bopImage.populateTransaction.stopFundraising()
+        const stopFundraisingTx = await rop.Calling("First Pool", stopFundraisingTxRaw.data);
+        const effects = await stopFundraisingTx.wait()
+        const responseLogs = effects.events.filter(e => e.event === "Response");
+        expect(responseLogs).to.have.length(1)
+        expect(responseLogs[0].args.success).to.be.true
+    })
+
+    it("Allows to send 1% of collected USD to the project before token announced", async () => {
+        const presendTxRaw = await bopImage.populateTransaction.preSend("1000" + "000000")
+        const presendTx = await rop.Calling("First Pool", presendTxRaw.data);
+        const effects = await presendTx.wait()
+        const responseLogs = effects.events.filter(e => e.event === "Response");
+        expect(responseLogs).to.have.length(1)
+        expect(responseLogs[0].args.success).to.be.true
+
+        const devBalance = await usdt.balanceOf(dev.address);
+        expect(devBalance.div("1000000").toString()).to.be.eq("2000")
+    })
+
+    it("Allows to owner to collect comissions", async () => {
+        const adminBalanceBeforeCollectingComissions = await usdt.balanceOf(admin.address)
+
+        const collectComissionsTxRaw = await bopImage.populateTransaction.getCommission()
+        const collectComissionsTx = await rop.Calling("First Pool", collectComissionsTxRaw.data);
+        const effects = await collectComissionsTx.wait()
+        const responseLogs = effects.events.filter(e => e.event === "Response");
+        expect(responseLogs).to.have.length(1)
+        expect(responseLogs[0].args.success).to.be.true
+
+        const adminBalanceAfterCollectingComissions = await usdt.balanceOf(admin.address)
+
+        expect(adminBalanceAfterCollectingComissions
+                .sub(adminBalanceBeforeCollectingComissions)
+                .div("1000000").toString()).to.be.eq("5841");
+    })
+
+    it("Sets token address", async () => {
+        const entrustTxRaw = await bopImage.populateTransaction.entrustToken(token.address)
+        const entrustTx = await rop.Calling("First Pool", entrustTxRaw.data);
+        const effects = await entrustTx.wait()
+        const responseLogs = effects.events.filter(e => e.event === "Response");
+        expect(responseLogs).to.have.length(1)
+        expect(responseLogs[0].args.success).to.be.true
+    })
+
+    it("Allows to send remaning collected USD to the project", async () => {
+        const presendTxRaw = await bopImage.populateTransaction.preSend("98000" + "000000")
+        const presendTx = await rop.Calling("First Pool", presendTxRaw.data);
+        const effects = await presendTx.wait()
+        const responseLogs = effects.events.filter(e => e.event === "Response");
+        expect(responseLogs).to.have.length(1)
+        expect(responseLogs[0].args.success).to.be.true
+
+        const devBalance = await usdt.balanceOf(dev.address);
+        expect(devBalance.div("1000000").toString()).to.be.eq("100000")
+    })
+
+    it("Receives some token", async () => {
+        const pool = await getDirectPoolAccess();
+        // So, we got 10M tokens for 100K.
+        const tx = await token.transfer(pool.address, "10000000" + "000000000");
+        await tx.wait()
+    })
+
+    it("Does not allow to team to collect comissions before first claim", async () => {
+        const crewBalanceBeforeCollectingComissions = await usdt.balanceOf(team[1].address)
+        const pool = await getDirectPoolAccess()
+
+        const collectComissionsTx = await pool.connect(team[1]).getCommission()
+        await collectComissionsTx.wait()
+
+        const crewBalanceAfterCollectingComissions = await usdt.balanceOf(team[1].address)
+
+        expect(crewBalanceAfterCollectingComissions
+                .sub(crewBalanceBeforeCollectingComissions).toString()).to.be.eq("0")
+    })
+
+    it("Does not allow to referrals to collect comissions before first claim", async () => {
+        const referralBalanceBeforeCollectingComissions = await usdt.balanceOf(investors[1].wallets[0].address)
+        const pool = await getDirectPoolAccess()
+
+        const collectComissionsTx = await pool.connect(investors[1].wallets[0]).getCommission()
+        await collectComissionsTx.wait()
+
+        const referralBalanceAfterCollectingComissions = await usdt.balanceOf(investors[1].wallets[0].address)
+
+        expect(referralBalanceAfterCollectingComissions
+                .sub(referralBalanceBeforeCollectingComissions).toString()).to.be.eq("0")
+    })
+
+    it("Check claims (some investors)", async () => {
+        let j = 0;
+        for (let i = 100; i < 130; ++i) {
+            j++;
+            const wallet = investors[i].wallets[j % investors[i].wallets.length];
+            const claimTx = await rop.connect(wallet).claimName("First Pool")
+            await claimTx.wait()
+
+            const tokenBalance = await token.balanceOf(wallet.address);
+            console.log(`${i} paid ${investors[i].amountInvested} and has balance ${tokenBalance}`)
+
+            expect(tokenBalance.div("1000000000").div("100").toString()).to.be.equal(`${investors[i].amountInvested}`);
+        }
+    })
+
+    it("Check salary claims [2]", async () => {
+        const wallet = team[2];
+        const claimTx = await rop.connect(wallet).claimName("First Pool")
+        await claimTx.wait()
+        const crewBalanceAfterCollectingComissions = await token.balanceOf(wallet.address)
+
+        expect(crewBalanceAfterCollectingComissions
+                .div("1000000000").toString()).to.be.eq("100000")
+    })
+
+    it("Allows to referrals to collect comissions (others will collect later)", async () => {
+        const pool = await getDirectPoolAccess()
+        let j = 0
+        for (let i = 0; i < 30; ++i) {
+            ++j
+            const wallet = investors[i].wallets[j % investors[i].wallets.length];
+            const referralBalanceBeforeCollectingComissions = await usdt.balanceOf(wallet.address)
+
+            const collectComissionsTx = await pool.connect(wallet).getCommission()
+            await collectComissionsTx.wait()
+
+            const referralBalanceAfterCollectingComissions = await usdt.balanceOf(wallet.address)
+
+            console.log(
+                `Referal ${i} got ${referralBalanceAfterCollectingComissions.sub(referralBalanceBeforeCollectingComissions).div("1000000")} in comissions`
+            );
+        }
+    })
+
+    it("Allows to the person in salary in stable to receive salary", async () => {
+        const crewBalanceBeforeCollectingComissions = await usdt.balanceOf(team[1].address)
+        const pool = await getDirectPoolAccess()
+
+        const collectComissionsTx = await pool.connect(team[1]).getCommission()
+        await collectComissionsTx.wait()
+
+        const crewBalanceAfterCollectingComissions = await usdt.balanceOf(team[1].address)
+
+        expect(crewBalanceAfterCollectingComissions
+                .sub(crewBalanceBeforeCollectingComissions)
+                .div("1000000").toString()).to.be.eq("500")
+    })
+
+    it("After sending payments and collecting comissions, remaining balance should be almost 0", async () => {
+        const pool = await getDirectPoolAccess();
+        const bopContractBalance = await usdt.balanceOf(pool.address)
+        expect(bopContractBalance.div("1000000").toString()).to.be.eq("0")
+    })
+
+    it("Receives more token", async () => {
+        const pool = await getDirectPoolAccess();
+        // So, we got +10M more (total 20M) tokens for 100K.
+        const tx = await token.transfer(pool.address, "10000000" + "000000000");
+        await tx.wait()
+    })
+
+    it("Check claims (all investors)", async () => {
+        let j = 0
+        for (let i = 0; i < investors.length; ++i) {
+            j += 7
+            if (investors[i].amountInvested === 0) break;
+            const wallet = investors[i].wallets[j % investors[i].wallets.length];
+
+            const claimTx = await rop.connect(wallet).claimName("First Pool")
+            await claimTx.wait()
+
+            let balanceOnAllInvestorsWallets = ethers.BigNumber.from(0);
+            for (let walletNum = 0; walletNum < investors[i].wallets.length; ++walletNum) {
+                const tokenBalance = await token.balanceOf(investors[i].wallets[walletNum].address);
+                balanceOnAllInvestorsWallets = balanceOnAllInvestorsWallets.add(tokenBalance)
+            }
+            console.log(`${i} paid ${investors[i].amountInvested} and has balance ${balanceOnAllInvestorsWallets}`)
+
+            expect(balanceOnAllInvestorsWallets.div("1000000000").div("200").toString()).to.be.equal(`${investors[i].amountInvested}`);
+        }
+    })
+
+    it("Check salary claims [0]", async () => {
+        const wallet = team[0];
+        const claimTx = await rop.connect(wallet).claimName("First Pool")
+        await claimTx.wait()
+        const crewBalanceAfterCollectingComissions = await token.balanceOf(wallet.address)
+
+        expect(crewBalanceAfterCollectingComissions
+                .div("1000000000").toString()).to.be.eq("20000")
+    })
+
+    it("Check salary claims [2]", async () => {
+        const wallet = team[2];
+        const claimTx = await rop.connect(wallet).claimName("First Pool")
+        await claimTx.wait()
+        const crewBalanceAfterCollectingComissions = await token.balanceOf(wallet.address)
+
+        expect(crewBalanceAfterCollectingComissions
+                .div("1000000000").toString()).to.be.eq("200000")
+    })
+});

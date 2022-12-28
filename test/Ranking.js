@@ -38,14 +38,6 @@ describe("Ranking", async function () {
       expect((await ranks.getRank(addr3.address))[0]).to.equal("Test2");
     });
 
-    it("giveRank", async function() {
-      expect((await ranks.getRank(addr1.address))[0]).to.equal("Test");
-
-      await ranks.connect(owner).giveRank(addr1.address, "Test2");
-
-      expect((await ranks.getRank(addr1.address))[0]).to.equal("Test2");
-    });
-
     it("createRank", async function() {
       expect((await ranks.showRanks()).length).to.equal(2);
 
@@ -190,12 +182,6 @@ describe("Ranking", async function () {
     describe("giveRanks", async function(){
       it("If the caller is not the owner", async function(){
         await expect(ranks.connect(addr1).giveRanks([addr1.address, addr2.address, addr3.address], "Test2")).to.be.reverted;
-      });
-    });
-
-    describe("giveRank", async function(){
-      it("If the caller is not the owner", async function(){
-        await expect(ranks.connect(addr1).giveRank(addr1.address, "Test2")).to.be.reverted;
       });
     });
 

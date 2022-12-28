@@ -7,8 +7,9 @@ import "@openzeppelin/contracts-upgradeable/utils/AddressUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts/proxy/Clones.sol";
 
-import "../contracts/Ranking.sol";
-import "../contracts/BOP.sol";
+import "./Ranking.sol";
+import "./BOP.sol";
+import "./RewardCalcs.sol";
 
 /// @title The root of the poole tree. Allows you to close control of a large
 /// number of pools to 1 address. Simplifies user interaction with a large number of pools.
@@ -35,7 +36,8 @@ contract RootOfPools_v2 is Initializable, OwnableUpgradeable {
 
     mapping(address => bool) private _imageTable;
 
-    address public _distributor;
+    RewardCalcs public _rewardCalcs;
+    address public _unionWallet;
 
     event PoolCreated(string name, address pool);
     event ImageAdded(address image);
@@ -68,13 +70,12 @@ contract RootOfPools_v2 is Initializable, OwnableUpgradeable {
         _rankingAddress = rankingAddress;
     }
 
-    function changeDistributor(address newDstr) public onlyOwner {
-        _distributor = newDstr;
+    function changeRewardCalcs(RewardCalcs newCalcs) public onlyOwner {
+        _rewardCalcs = newCalcs;
     }
 
-    /// @notice Returns the address of the usd token in which funds are collected
-    function getUSDAddress() external view returns (address) {
-        return _usdAddress;
+    function changeUnionWallet(address newUnionWallet) public onlyOwner {
+        _unionWallet = newUnionWallet;
     }
 
     function addImage(address image) external onlyOwner {
@@ -84,23 +85,6 @@ contract RootOfPools_v2 is Initializable, OwnableUpgradeable {
         _imageTable[image] = true;
 
         emit ImageAdded(image);
-    }
-
-    /// @notice Returns the linked branch contracts
-    function getPools() external view returns (Pool[] memory) {
-        return Pools;
-    }
-
-    function getPool(string calldata _name) external view returns (address) {
-        for (uint256 i = 0; i < Pools.length; i++) {
-            if (
-                keccak256(abi.encodePacked(Pools[i].name)) ==
-                keccak256(abi.encodePacked(_name))
-            ) {
-                return Pools[i].pool;
-            }
-        }
-        return address(0);
     }
 
     /// @notice Allows you to attach a new pool (branch contract)
@@ -120,6 +104,7 @@ contract RootOfPools_v2 is Initializable, OwnableUpgradeable {
         );
 
         address pool = Clones.clone(Images[imageNumber]);
+        _rewardCalcs.addSnapshotter(pool);
 
         (bool success, bytes memory data) = pool.call(dataIn);
 
@@ -148,6 +133,8 @@ contract RootOfPools_v2 is Initializable, OwnableUpgradeable {
         external
         shouldExist(name)
     {
+        // _usd.transferFrom(tx.origin, address(this), amount);
+        // _usd.transfer(address(this), pool, amount);
         BranchOfPools(_poolsTable[name]).deposit(amount);
     }
 
@@ -166,6 +153,37 @@ contract RootOfPools_v2 is Initializable, OwnableUpgradeable {
     }
 
     //TODO
+    ///@dev To find out the list of pools from which a user can mine something,
+    ///     use the prepClaimAll function
+    function claimAll(address[] calldata pools) external {
+        for (uint256 i; i < pools.length; i++) {
+            claimAddress(pools[i]);
+        }
+    }
+
+    /// @notice Returns the address of the usd token in which funds are collected
+    function getUSDAddress() external view returns (address) {
+        return _usdAddress;
+    }
+
+    /// @notice Returns the linked branch contracts
+    function getPools() external view returns (Pool[] memory) {
+        return Pools;
+    }
+
+    function getPool(string calldata _name) external view returns (address) {
+        for (uint256 i = 0; i < Pools.length; i++) {
+            if (
+                keccak256(abi.encodePacked(Pools[i].name)) ==
+                keccak256(abi.encodePacked(_name))
+            ) {
+                return Pools[i].pool;
+            }
+        }
+        return address(0);
+    }
+
+    //TODO
     function prepClaimAll(address user)
         external
         view
@@ -179,15 +197,6 @@ contract RootOfPools_v2 is Initializable, OwnableUpgradeable {
         }
 
         return pools;
-    }
-
-    //TODO
-    ///@dev To find out the list of pools from which a user can mine something,
-    ///     use the prepClaimAll function
-    function claimAll(address[] calldata pools) external {
-        for (uint256 i; i < pools.length; i++) {
-            claimAddress(pools[i]);
-        }
     }
 
     function checkAllClaims(address user) external view returns (uint256) {

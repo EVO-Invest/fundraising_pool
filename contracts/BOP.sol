@@ -1,15 +1,16 @@
 //SPDX-License-Identifier: GNU GPLv3
 pragma solidity ^0.8.2;
 
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/utils/Strings.sol";
-import "@openzeppelin/contracts/utils/math/SafeMath.sol";
-import "@openzeppelin/contracts/utils/Address.sol";
-
+import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/StringsUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/AddressUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
-import "../contracts/ROP.sol";
-import "../contracts/Distribution.sol";
+import "./ROP.sol";
+import "./RewardCalcs.sol";
+import "./UnionWallet.sol";
+import "./FundCoreLib.sol";
 
 /// @title The pool's subsidiary contract for fundraising.
 /// This contract collects funds, distributes them, and charges fees
@@ -17,75 +18,57 @@ import "../contracts/Distribution.sol";
 /// @dev This contract pulls commissions and other parameters from the Ranking contract.
 /// Important: Agree on the structure of the ranking parameters and this contract!
 /// Otherwise the calculations can be wrong!
-contract BranchOfPools is Initializable {
-    using Address for address;
-    using Strings for uint256;
+contract BranchOfPools is Initializable, OwnableUpgradeable {
+    using AddressUpgradeable for address;
+    using StringsUpgradeable for uint256;
+    using FundCoreLib for FundCoreLib.FundMath;
 
     enum State {
-        Pause,
-        Fundrasing,
+        Paused,
+        Fundraising,
         WaitingToken,
         TokenDistribution,
         Emergency
     }
-    State public _state = State.Pause;
+    
+    State public _state;
 
-    address public _owner;
-    address private _root;
+    RootOfPools_v2 private _root;
 
     uint256 public _stepValue;
-    uint256 public _VALUE;
     uint256 private _decimals;
+
+    // Amount of USD we send in a test transaction.
     uint256 public _preSend;
 
-    uint256 public _CURRENT_VALUE;
-    uint256 public _FUNDS_RAISED;
-    uint256 public _CURRENT_COMMISSION;
-    uint256 public _CURRENT_VALUE_TOKEN;
+    // Total amount of token we already distributed.
+    // So that token.balanceOf(this) + _DISTRIBUTED_TOKEN = amount of received token.
     uint256 public _DISTRIBUTED_TOKEN;
-    uint256 public _TOKEN_COMMISSION;
+    bool _ownerAlreadyCollectedFunds;
+    bool _firstClaimHappened;
 
-    mapping(address => uint256) public _valueUSDList;
+    /* _usdEmergency stores the original amount of funds deposited,
+       no commissions, no nothing. So that in case of emergency,
+       users can get exactly what they paid. */
     mapping(address => uint256) public _usdEmergency;
-    mapping(address => uint256) public _issuedTokens;
-    mapping(address => bool) public _withoutCommission;
 
-    address[] public _listParticipants;
+    uint256 _teamSnapshotId;
 
-    address public _usd;
-    address public _token;
+    ERC20Upgradeable public _usd;
+    ERC20Upgradeable public _token;
     address public _devUSDAddress;
-
-    struct Member {
-        address awardsAddress;
-        uint256 amount;
-    }
-    address public _distributor;
-    mapping(string => Member) _team;
-    string[] public _teamToken;
-    string[] public _teamUSD;
-    uint256 public _teamShare; //How much money does the team need in tokens
-    uint256 public _currentTeamShare;
-
     uint256 public _unlockTime;
+    uint256 _defaultCommission;
 
-    uint256 public _refferalVolume;
+    FundCoreLib.FundMath _fundMath;
+    RewardCalcs _rewardCalcs;
+    UnionWallet _unionWallet;
 
-    bool private _getCommissionFlag;
-
-    mapping(address => uint256) public _refferals;
-
-    modifier onlyOwner() {
-        require(msg.sender == _owner, "Ownable: Only owner");
+    // choice = true | onlyState modifier
+    // choice = false | onlyNotState modifier
+    modifier stateCheck(State state, bool choice) {
+        require(choice ? _state == state : _state != state, "BOP: State error!");
         _;
-    }
-
-    function transferOwnership(address newOwner) public virtual onlyOwner {
-        require(
-            newOwner != address(0),
-            "Ownable: new owner is the zero address"
-        );
-        _owner = newOwner;
     }
 
     /// @notice Assigns the necessary values to the variables
@@ -96,139 +79,84 @@ contract BranchOfPools is Initializable {
     /// @param Step - The step with which we raise funds
     /// @param devUSDAddress - The address of the developers to which they will receive the collected funds
     function init(
-        address Root,
+        RootOfPools_v2 Root,
         uint256 VALUE,
         uint256 Step,
         address devUSDAddress,
         address tokenUSD,
         uint256 unlockTime
     ) external initializer {
-        require(Root != address(0), "The root address must not be zero.");
+        require(address(Root) != address(0), "The root address must not be zero.");
         require(
             devUSDAddress != address(0),
             "The devUSDAddress must not be zero."
         );
 
-        _owner = msg.sender;
+        _state = State.Paused;
         _root = Root;
-        _usd = tokenUSD;
-        _decimals = 10**ERC20(_usd).decimals();
-        _VALUE = VALUE * _decimals;
+        _usd = ERC20Upgradeable(tokenUSD);
+        _decimals = 10**_usd.decimals();
         _stepValue = Step * _decimals;
         _devUSDAddress = devUSDAddress;
         _unlockTime = unlockTime;
+        _ownerAlreadyCollectedFunds = false;
+        _firstClaimHappened = false;
 
-        _distributor = RootOfPools_v2(_root)._distributor();
-        string[] memory team = Distribution(_distributor).getTeam();
-        for (uint256 i = 0; i < team.length; i++) {
-            Distribution.TeamMember memory member = Distribution(_distributor)
-                .getTeamMember(team[i]);
+        __Ownable_init();
 
-            _team[team[i]].amount = (_VALUE * member.interest) / member.shift;
-            _team[team[i]].awardsAddress = member.addresses[
-                member.awardsAddress
-            ];
+        _rewardCalcs = RewardCalcs(_root._rewardCalcs());
+        _unionWallet = UnionWallet(_root._unionWallet());
 
-            if (member.choice) {
-                //Receiving an award in tokens
-                _teamToken.push(team[i]);
-                _teamShare += _team[team[i]].amount;
-            } else {
-                //Receiving an award in usd
-                _teamUSD.push(team[i]);
-            }
+        _teamSnapshotId = _rewardCalcs.snapshotTeam();
+        updateFundraisingTarget(VALUE * _decimals);
 
-            _valueUSDList[_team[team[i]].awardsAddress] = _team[team[i]].amount;
-        }
+        _defaultCommission = Ranking(RootOfPools_v2(_root)._rankingAddress())
+            .getParRankOfUser(address(0x0))[2];
     }
 
-    function fillTeamShare(uint256 amount) public onlyState(State.Fundrasing) {
-        require(_currentTeamShare + amount <= _teamShare);
-
-        ERC20(_usd).transferFrom(tx.origin, address(this), amount);
-
-        _currentTeamShare += amount;
-
-        _CURRENT_VALUE += amount;
+    function updateFundraisingTarget(uint256 fundraisingTarget) internal {
+        uint256 previousTarget = _fundMath.getFundraisingTarget();
+        for (uint256 i = 0; i < _rewardCalcs.allTeamLength(); ++i) {
+            address memberAddress = _rewardCalcs.allTeamAt(i);
+            (uint16 commission, RewardCalcs.TeamMemberRewardTypeChoice choice) = _rewardCalcs.teamMemberRewardInfoAt(memberAddress, _teamSnapshotId);
+            uint256 prevSalaryExpectation = previousTarget * commission / _rewardCalcs._denominator();
+            uint256 newSalaryExpectation = fundraisingTarget * commission / _rewardCalcs._denominator();
+            if (choice == RewardCalcs.TeamMemberRewardTypeChoice.TOKEN) {
+                _fundMath.updateOutputTokenSalary(memberAddress, prevSalaryExpectation, newSalaryExpectation);
+            } else {
+                _fundMath.updateInputTokenSalary(memberAddress, prevSalaryExpectation, newSalaryExpectation);
+            }
+        }
+        _fundMath.changeFundraisingGoal(fundraisingTarget);
     }
 
     function getCommission() public {
-        if (
-            msg.sender == _owner &&
-            ((_state == State.WaitingToken) ||
-                (_state == State.TokenDistribution)) &&
-            !_getCommissionFlag
-        ) {
-            uint256 forTeam;
-            for (uint256 i = 0; i < _teamUSD.length; i++) {
-                forTeam += _team[_teamUSD[i]].amount;
-            }
-
-            //Send to admin
-            ERC20(_usd).transfer(
-                RootOfPools_v2(_root).owner(),
-                ERC20(_usd).balanceOf(address(this)) - _refferalVolume - forTeam
+        if (stateSameOrAfter(State.WaitingToken) && !_ownerAlreadyCollectedFunds) {
+            _ownerAlreadyCollectedFunds = true;
+            _usd.transfer(
+                _root.owner(),
+                _fundMath.ownersShare()
             );
-            _getCommissionFlag = true;
-            return;
         }
 
-        require(
-            (block.timestamp >= _unlockTime) ||
-                (_state == State.TokenDistribution)
-        );
-        if (_refferals[tx.origin] > 0) {
-            uint256 amount = _refferals[tx.origin];
-
-            _refferals[tx.origin] = 0;
-
-            ERC20(_usd).transfer(tx.origin, amount);
-
-            return;
-        }
-
-        for (uint256 i = 0; i < _teamUSD.length; i++) {
-            if (tx.origin == _team[_teamUSD[i]].awardsAddress) {
-                uint256 amount = _team[_teamUSD[i]].amount;
-
-                _team[_teamUSD[i]].amount = 0;
-
-                ERC20(_usd).transfer(tx.origin, amount);
-
-                return;
-            }
+        if (_firstClaimHappened || (block.timestamp >= _unlockTime)) {
+            address user = _unionWallet.resolveIdentity(tx.origin);
+            // Ref. payments are also treates as salary by our depositing code.
+            _usd.transfer(
+                tx.origin,
+                _fundMath.takeSalary(user)
+            );
         }
     }
 
     /// @notice Changes the target amount of funds we collect
-    /// @param value - the new target amount of funds raised
-    function changeTargetValue(uint256 value)
-        external
+    /// @param newFundraisingTarget - the new target amount of funds raised
+    function changeFundraisingGoal(uint256 newFundraisingTarget) 
+        public
         onlyOwner
-        onlyNotState(State.TokenDistribution)
-        onlyNotState(State.WaitingToken)
     {
-        _VALUE = value;
-
-        _teamShare = 0;
-
-        for (uint256 i = 0; i < _teamToken.length; i++) {
-            Distribution.TeamMember memory member = Distribution(_distributor)
-                .getTeamMember(_teamToken[i]);
-            _team[_teamToken[i]].amount =
-                (_VALUE * member.interest) /
-                member.shift;
-
-            _teamShare += _team[_teamToken[i]].amount;
-        }
-
-        for (uint256 i = 0; i < _teamUSD.length; i++) {
-            Distribution.TeamMember memory member = Distribution(_distributor)
-                .getTeamMember(_teamUSD[i]);
-            _team[_teamUSD[i]].amount =
-                (_VALUE * member.interest) /
-                member.shift;
-        }
+        require(stateSameOrBefore(State.Fundraising), "Too late to change value");
+        updateFundraisingTarget(newFundraisingTarget * _decimals);
     }
 
     /// @notice Changes the step with which we raise funds
@@ -236,142 +164,75 @@ contract BranchOfPools is Initializable {
     function changeStepValue(uint256 step)
         external
         onlyOwner
-        onlyNotState(State.TokenDistribution)
-        onlyNotState(State.WaitingToken)
     {
+        require(stateSameOrBefore(State.Fundraising), "Too late to change value");
         _stepValue = step;
     }
 
-    modifier onlyState(State state) {
-        require(_state == state, "STATE: It's impossible to do it now.");
-        _;
-    }
-
-    modifier onlyNotState(State state) {
-        require(_state != state, "STATE: It's impossible to do it now.");
-        _;
-    }
-
     /// @notice Opens fundraising
-    function startFundraising() external onlyOwner onlyState(State.Pause) {
-        _state = State.Fundrasing;
+    function startFundraising() external onlyOwner stateCheck(State.Paused, true) {
+        _state = State.Fundraising;
     }
 
     /// @notice Termination of fundraising and opening the possibility of refunds to depositors
     function stopEmergency()
         external
         onlyOwner
-        onlyNotState(State.Pause)
-        onlyNotState(State.TokenDistribution)
+        stateCheck(State.Paused, false)
+        stateCheck(State.TokenDistribution, false)
     {
         if (_state == State.WaitingToken) {
-            uint256 balance = ERC20(_usd).balanceOf(address(this));
-            require(
-                balance >= _FUNDS_RAISED + _CURRENT_COMMISSION,
-                "It takes money to get a refund"
-            );
+            // If developers decided not to take our money,
+            // we can enter the emergency only if we got a full refund.
+            require(_usd.balanceOf(address(this)) >= _fundMath.getTotalCollected());
         }
-
         _state = State.Emergency;
     }
 
     /// @notice Returns the deposited funds to the caller
     /// @dev This is a bad way to write a transaction check,
     /// but in this case we are forced not to use require because of the usdt token implementation,
-    /// which does not return a result. And to keep flexibility in terms of using different ERC20,
+    /// which does not return a result. And to keep flexibility in terms of using different ERC20Upgradeable,
     /// we have to do it :\
-    function paybackEmergency() external onlyState(State.Emergency) {
-        uint256 usdT = _usdEmergency[tx.origin];
-
-        if (usdT == 0) {
-            revert("You have no funds to withdraw!");
-        }
-
-        _usdEmergency[tx.origin] = 0;
-
-        ERC20(_usd).transfer(tx.origin, usdT);
+    function paybackEmergency() external stateCheck(State.Emergency, true) {
+        address user = _unionWallet.resolveIdentity(tx.origin);
+        uint256 usdT = _usdEmergency[user];
+        require(usdT > 0, "You have no funds to withdraw!");
+        _usdEmergency[user] = 0;
+        _usd.transfer(tx.origin, usdT);
     }
 
     /// @notice The function of the deposit of funds.
     /// @dev The contract attempts to debit the user's funds in the specified amount in the token whose contract is located at _usd
     /// the amount must be approved for THIS address
     /// @param amount - The number of funds the user wants to deposit
-    function deposit(uint256 amount) external onlyState(State.Fundrasing) {
-        uint256 commission;
-        uint256[] memory rank = Ranking(RootOfPools_v2(_root)._rankingAddress())
-            .getParRankOfUser(tx.origin);
-        if (rank[2] != 0) {
-            commission = (amount * rank[2]) / 100; //[Min, Max, Commission]
-        }
-        uint256 Min = _decimals * rank[0];
-        uint256 Max = _decimals * rank[1];
+    function deposit(uint256 amount) external stateCheck(State.Fundraising, true) {
+        _usd.transferFrom(tx.origin, address(this), amount);
+        address user = _unionWallet.resolveIdentity(tx.origin);
+        uint256[] memory rank = Ranking(_root._rankingAddress())
+            .getParRankOfUser(user);
 
-        if (rank[2] == 0) {
-            _withoutCommission[tx.origin] = true;
-        }
+        require(amount >= /* Min=*/ _decimals * rank[0] && 
+                amount + _usdEmergency[user] <= /* Max=*/ _decimals * rank[1] &&
+                amount % _stepValue == 0,
+                "DEPOSIT: Wrong funding!");
 
-        require(amount >= Min, "DEPOSIT: Too little funding!");
-        require(
-            amount + _valueUSDList[tx.origin] <= Max,
-            "DEPOSIT: Too many funds!"
-        );
-
-        require((amount) % _stepValue == 0, "DEPOSIT: Must match the step!");
-        require(
-            _CURRENT_VALUE + amount - commission <= _VALUE - _teamShare,
-            "DEPOSIT: Fundraising goal exceeded!"
-        );
-
-        ERC20(_usd).transferFrom(tx.origin, address(this), amount);
-        _usdEmergency[tx.origin] += amount;
-
-        if (_valueUSDList[tx.origin] == 0) {
-            _listParticipants.push(tx.origin);
-        }
-
-        _valueUSDList[tx.origin] += amount - commission;
-        _CURRENT_COMMISSION += commission;
-        _CURRENT_VALUE += amount - commission;
-
-        if (_CURRENT_VALUE == _VALUE) {
-            _state = State.WaitingToken;
-        }
-
-        //Referral part
-        Distribution.Member memory member = Distribution(_distributor)
-            .getMember(tx.origin);
-        if (member.owner != address(0)) {
-            Distribution.ReferralOwner memory ownerMember = Distribution(
-                _distributor
-            ).getOwnerMember(member.owner);
-
-            uint256 forDistribution = (amount * member.interest) / member.shift;
-
-            _refferals[
-                ownerMember.addresses[ownerMember.awardsAddress]
-            ] += forDistribution;
-
-            _refferalVolume += forDistribution;
-        }
+        _usdEmergency[user] += amount;
+        uint256 totalCommissions = amount * /* CommissionPrc=*/ rank[2] / 100;
+        _fundMath.onDepositInputTokens(user, amount - totalCommissions, totalCommissions);
+        (uint256 referralCommission, address referral) = _rewardCalcs.calculateReferralsCommission(user, amount, totalCommissions, amount * _defaultCommission / 100);
+        _fundMath.updateInputTokenSalary(referral, 0, referralCommission);
     }
 
     function preSend(uint256 amount)
         external
         onlyOwner
-        onlyNotState(State.Pause)
-        onlyNotState(State.TokenDistribution)
-        onlyNotState(State.Emergency)
+        stateCheck(State.Paused, false)
+        stateCheck(State.Emergency, false)
     {
-        require(amount < _CURRENT_VALUE - _preSend);
-
-        if (_state == State.WaitingToken) {
-            uint256 balance = ERC20(_usd).balanceOf(address(this));
-            require(balance == _CURRENT_VALUE - _preSend);
-        }
-
+        require(amount + _preSend <= _fundMath.getFundraisingTarget());
         _preSend += amount;
-
-        ERC20(_usd).transfer(_devUSDAddress, amount);
+        _usd.transfer(_devUSDAddress, amount);
     }
 
     /// @notice Closes the fundraiser and distributes the funds raised
@@ -379,20 +240,18 @@ contract BranchOfPools is Initializable {
     function stopFundraising()
         external
         onlyOwner
-        onlyNotState(State.Pause)
-        onlyNotState(State.TokenDistribution)
-        onlyNotState(State.Emergency)
+        stateCheck(State.Paused, false)
+        stateCheck(State.TokenDistribution, false)
+        stateCheck(State.Emergency, false)
     {
-        require(
-            _CURRENT_VALUE == _VALUE,
-            "COLLECT: The funds have already been withdrawn."
-        );
+        uint256 remainingPayment = _fundMath.requiredAmountToCloseFundraising();
+        _usd.transferFrom(_root.owner(), address(this), remainingPayment);
+        _fundMath.closeFundraising(remainingPayment, owner());
+        _state = State.WaitingToken;
+    }
 
-        _FUNDS_RAISED = _CURRENT_VALUE;
-        _CURRENT_VALUE = 0;
-
-        //Send to devs
-        ERC20(_usd).transfer(_devUSDAddress, _FUNDS_RAISED - _preSend);
+    function requiredAmountToCloseFundraising() external view stateCheck(State.Fundraising, true) returns (uint256) {
+        return _fundMath.requiredAmountToCloseFundraising();
     }
 
     /// @notice Allows developers to transfer tokens for distribution to contributors
@@ -401,51 +260,45 @@ contract BranchOfPools is Initializable {
     function entrustToken(address tokenAddr)
         external
         onlyOwner
-        onlyNotState(State.Emergency)
-        onlyNotState(State.Fundrasing)
-        onlyNotState(State.Pause)
+        stateCheck(State.Emergency, false)
+        stateCheck(State.Fundraising, false)
+        stateCheck(State.Paused, false)
     {
         require(
             tokenAddr != address(0),
             "ENTRUST: The tokenAddr must not be zero."
         );
 
-        _token = tokenAddr;
-
+        _token = ERC20Upgradeable(tokenAddr);
         _state = State.TokenDistribution;
     }
 
     /// @notice Allows users to brand the distributed tokens
-    function claim() external onlyState(State.TokenDistribution) {
-        require(
-            _valueUSDList[tx.origin] > 0,
-            "CLAIM: You have no unredeemed tokens!"
-        );
-
-        uint256 amount;
-
-        uint256 currentTokenBalance = ERC20(_token).balanceOf(address(this));
-
-        if (_CURRENT_VALUE_TOKEN < currentTokenBalance) {
-            uint256 temp = currentTokenBalance - _CURRENT_VALUE_TOKEN;
-            _CURRENT_VALUE_TOKEN += temp;
-        }
-
-        amount =
-            (
-                ((_valueUSDList[tx.origin] *
-                    (_CURRENT_VALUE_TOKEN + _DISTRIBUTED_TOKEN)) /
-                    _FUNDS_RAISED)
-            ) -
-            _issuedTokens[tx.origin];
-
-        _issuedTokens[tx.origin] += amount;
+    function claim() external stateCheck(State.TokenDistribution, true) {
+        address user = _unionWallet.resolveIdentity(tx.origin);
+        uint256 amount = _fundMath.claimOutputTokens(user, _DISTRIBUTED_TOKEN + _token.balanceOf(address(this)));
+        require(amount > 0, "CLAIM: You have no unredeemed tokens!");
         _DISTRIBUTED_TOKEN += amount;
-        _CURRENT_VALUE_TOKEN -= amount;
+        require(_token.transfer(tx.origin, amount));
+        _firstClaimHappened = true;
+    }
 
-        if (amount > 0) {
-            ERC20(_token).transfer(tx.origin, amount);
-        }
+    function stateSameOrAfter(State s) public view returns (bool) {
+        if (_state == s) return true;
+        if (_state == State.Emergency) return false;
+        if (s == State.Paused) return true;
+        if (s == State.Fundraising) return (_state == State.WaitingToken || _state == State.TokenDistribution);
+        if (s == State.WaitingToken) return (_state == State.TokenDistribution);
+        return false;  // No states after TokenDistributon.
+    }
+
+    function stateSameOrBefore(State s) public view returns (bool) {
+        if (_state == s) return true;
+        if (_state == State.Emergency) return false;
+        if (s == State.TokenDistribution) return true;
+        if (s == State.WaitingToken) return (_state == State.Fundraising || _state == State.Paused);
+        if (s == State.Fundraising) return (_state == State.Paused);
+        return false;  // No states before Paused.
     }
 
     /// @notice Returns the amount of funds that the user deposited
@@ -455,22 +308,16 @@ contract BranchOfPools is Initializable {
         view
         returns (uint256)
     {
-        return _usdEmergency[user];
+        return _usdEmergency[_unionWallet.resolveIdentity(user)];
     }
 
     /// @notice Returns the number of tokens the user can take at the moment
     /// @param user - address user
     function myCurrentAllocation(address user) public view returns (uint256) {
-        if (_FUNDS_RAISED == 0) {
+        user = _unionWallet.resolveIdentity(user);
+        if (_state != State.TokenDistribution)
             return 0;
-        }
-
-        uint256 amount = (
-            ((_valueUSDList[user] *
-                (_CURRENT_VALUE_TOKEN + _DISTRIBUTED_TOKEN)) / _FUNDS_RAISED)
-        ) - _issuedTokens[user];
-
-        return amount;
+        return _fundMath.myOutputTokens(user, _DISTRIBUTED_TOKEN + _token.balanceOf(address(this)));
     }
 
     /// @notice Auxiliary function for RootOfPools claimAll
